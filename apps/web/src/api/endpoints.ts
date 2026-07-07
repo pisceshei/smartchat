@@ -2,15 +2,18 @@
  *  (apps/api/app/modules/*). One namespace per backend module. */
 import { http } from "./client";
 import type {
+  AuthOut,
   ApiTokenCreated,
   ApiTokenInfo,
   AuditEntry,
   AuthResponse,
   ChannelAccount,
+  ChannelIdentity,
   ChannelType,
   Contact,
   ConversationSettings,
   Conversation,
+  ConversationTranslateConfig,
   CursorPage,
   CustomFieldDef,
   FileRef,
@@ -37,11 +40,25 @@ import type {
 
 /* ---------------------------------------------------------------- auth */
 
+function normalizeAuth(o: AuthOut): AuthResponse {
+  return {
+    token: o.access_token,
+    refreshToken: o.refresh_token,
+    user: { id: o.user_id, email: o.email, name: o.display_name },
+    workspaces: o.workspaces,
+  };
+}
+
 export const authApi = {
-  login: (body: { email: string; password: string }) =>
-    http<AuthResponse>("POST", "/auth/login", { body }),
-  register: (body: { email: string; password: string; name: string; workspace_name: string }) =>
-    http<AuthResponse>("POST", "/auth/register", { body }),
+  login: async (body: { email: string; password: string }): Promise<AuthResponse> =>
+    normalizeAuth(await http<AuthOut>("POST", "/auth/login", { body })),
+  register: async (body: {
+    email: string;
+    password: string;
+    name: string;
+    workspace_name: string;
+  }): Promise<AuthResponse> =>
+    normalizeAuth(await http<AuthOut>("POST", "/auth/register", { body })),
   me: () => http<User>("GET", "/auth/me"),
 };
 
@@ -54,47 +71,104 @@ export const workspacesApi = {
 export type InboxTab = "mine" | "bot" | "ai" | "unassigned" | "all" | "team";
 export type InboxListFilter = "all" | "unread" | "needs_reply";
 
-export const inboxApi = {
-  summary: () => http<InboxSummary>("GET", "/inbox/summary"),
+/** Backend returns each list item / detail as {conversation, contact, tags/tag_ids}
+ * with a nested translation map; the UI wants one flat Conversation. */
+function flattenConversation(row: {
+  conversation: Record<string, unknown> & { id: string };
+  contact?: unknown;
+  tags?: Tag[];
+  tag_ids?: string[];
+}): Conversation {
+  const conv = row.conversation as unknown as Conversation & {
+    translation?: ConversationTranslateConfig;
+  };
+  return {
+    ...conv,
+    contact: (row.contact as Conversation["contact"]) ?? conv.contact ?? null,
+    tags: row.tags ?? conv.tags,
+    bot_managed: (conv as { ai_state?: string }).ai_state
+      ? (conv as { ai_state?: string }).ai_state !== "off"
+      : conv.bot_managed,
+    translate: (conv.translation as ConversationTranslateConfig) ?? conv.translate ?? null,
+  };
+}
 
-  listConversations: (params: {
+export const inboxApi = {
+  summary: () => http<InboxSummary>("GET", "/inbox/unread-summary"),
+
+  listConversations: async (params: {
     tab?: InboxTab;
     view_id?: string;
     q?: string;
     filter?: InboxListFilter;
     cursor?: string;
     limit?: number;
-  }) => http<CursorPage<Conversation>>("GET", "/conversations", { query: params }),
+  }): Promise<CursorPage<Conversation>> => {
+    const res = await http<{
+      items: Parameters<typeof flattenConversation>[0][];
+      next_cursor: string | null;
+    }>("GET", "/inbox/conversations", { query: params });
+    return { items: res.items.map(flattenConversation), next_cursor: res.next_cursor };
+  },
 
-  getConversation: (id: string) => http<Conversation>("GET", `/conversations/${id}`),
+  getConversation: async (id: string): Promise<Conversation> =>
+    flattenConversation(
+      await http<Parameters<typeof flattenConversation>[0]>(
+        "GET",
+        `/inbox/conversations/${id}`,
+      ),
+    ),
 
   listMessages: (conversationId: string, params: { before?: string; limit?: number } = {}) =>
-    http<CursorPage<Message>>("GET", `/conversations/${conversationId}/messages`, {
+    http<CursorPage<Message>>("GET", `/inbox/conversations/${conversationId}/messages`, {
       query: params,
     }),
 
   sendMessage: (
     conversationId: string,
     body: { client_msg_id: string; content: MessageContent; is_note?: boolean },
-  ) => http<Message>("POST", `/conversations/${conversationId}/messages`, { body }),
+  ) => http<Message>("POST", `/inbox/conversations/${conversationId}/messages`, { body }),
 
   markRead: (conversationId: string) =>
-    http<void>("POST", `/conversations/${conversationId}/read`),
+    http<void>("POST", `/inbox/conversations/${conversationId}/read`),
 
-  updateConversation: (
+  /** Dispatches to the backend's dedicated action routes (the backend has no
+   * single PATCH — assign/close/reopen/tags/translation/managed are distinct
+   * endpoints per plan A.5). One field per call from the UI. */
+  updateConversation: async (
     conversationId: string,
     body: Partial<{
       status: "open" | "closed";
       assignee_member_id: string | null;
       bot_managed: boolean;
-      remark: string | null;
       translate: { enabled: boolean; agent_lang?: string | null; customer_lang?: string | null };
       tag_ids: string[];
     }>,
-  ) => http<Conversation>("PATCH", `/conversations/${conversationId}`, { body }),
+  ): Promise<Conversation> => {
+    const base = `/inbox/conversations/${conversationId}`;
+    if (body.status === "closed") return http<Conversation>("POST", `${base}/close`);
+    if (body.status === "open") return http<Conversation>("POST", `${base}/reopen`);
+    if (body.tag_ids !== undefined)
+      return http<Conversation>("PUT", `${base}/tags`, { body: { tag_ids: body.tag_ids } });
+    if (body.assignee_member_id !== undefined)
+      return http<Conversation>("POST", `${base}/assign`, {
+        body: { member_id: body.assignee_member_id },
+      });
+    if (body.bot_managed !== undefined)
+      return http<Conversation>("PATCH", `${base}/managed`, { body: { managed: body.bot_managed } });
+    if (body.translate !== undefined)
+      return http<Conversation>("PATCH", `${base}/translation`, {
+        body: {
+          enabled: body.translate.enabled,
+          agent_lang: body.translate.agent_lang ?? null,
+          customer_lang: body.translate.customer_lang ?? null,
+        },
+      });
+    return http<Conversation>("GET", base);
+  },
 
   history: (conversationId: string) =>
-    http<Conversation[]>("GET", `/conversations/${conversationId}/history`),
+    http<Conversation[]>("GET", `/inbox/conversations/${conversationId}/sessions`),
 
   listViews: () => http<InboxView[]>("GET", "/inbox/views"),
   createView: (body: Omit<InboxView, "id" | "created_at">) =>
@@ -128,7 +202,22 @@ export const contactsApi = {
     );
     return { items: res.items, total: res.total, page, page_size: pageSize };
   },
-  get: (id: string) => http<Contact>("GET", `/contacts/${id}`),
+  /** Backend returns a 360 wrapper {contact, identities, tags, orders,
+   * conversations, merge_history, ...}. Flatten it to the UI's Contact shape
+   * (contact fields hoisted, identities/tags kept as arrays). */
+  get: async (id: string): Promise<Contact> => {
+    const d = await http<{
+      contact: Record<string, unknown> & { id: string };
+      identities?: ChannelIdentity[];
+      tags?: Tag[];
+    }>("GET", `/contacts/${id}`);
+    return {
+      ...(d.contact as unknown as Contact),
+      one_id: d.contact.id as string,
+      channel_identities: d.identities ?? [],
+      tags: d.tags ?? [],
+    };
+  },
   update: (id: string, body: Partial<Contact>) =>
     http<Contact>("PATCH", `/contacts/${id}`, { body }),
   create: (body: { display_name: string; email?: string; phone?: string }) =>

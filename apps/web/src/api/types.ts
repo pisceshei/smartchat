@@ -396,10 +396,24 @@ export interface WorkspaceBrief {
   name: string;
   plan_code?: string;
   role_name?: string;
+  member_id?: string;
 }
 
+/** Raw backend shape from /auth/{login,register,refresh}. */
+export interface AuthOut {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  user_id: string;
+  email: string;
+  display_name: string;
+  workspaces: WorkspaceBrief[];
+}
+
+/** Normalized shape consumed by the auth store. */
 export interface AuthResponse {
   token: string;
+  refreshToken: string;
   user: User;
   workspaces: WorkspaceBrief[];
 }

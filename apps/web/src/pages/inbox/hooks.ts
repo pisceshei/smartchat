@@ -170,7 +170,6 @@ export function useUpdateConversation(conversationId: string) {
           ...(body.status ? { status: body.status } : {}),
           ...(body.bot_managed !== undefined ? { bot_managed: body.bot_managed } : {}),
           ...(body.translate !== undefined ? { translate: body.translate } : {}),
-          ...(body.remark !== undefined ? { remark: body.remark } : {}),
         });
       }
       return { prev };

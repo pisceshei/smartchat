@@ -88,7 +88,7 @@ export function ContactDrawer({
                 children: (
                   <Descriptions column={1} size="small" bordered>
                     <Descriptions.Item label={t("inbox.cust.oneId")}>
-                      <span className="sc-mono">{c.one_id ?? c.id}</span>
+                      <span className="sc-mono">{c?.one_id ?? c?.id}</span>
                     </Descriptions.Item>
                     <Descriptions.Item label={t("inbox.cust.language")}>{c.language ?? "-"}</Descriptions.Item>
                     <Descriptions.Item label={t("inbox.cust.country")}>

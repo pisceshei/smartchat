@@ -87,13 +87,16 @@ export async function http<T>(
   return (await res.json()) as T;
 }
 
-/** WebSocket URL for the realtime gateway (same origin as API base). */
-export function wsUrl(params: Record<string, string | number>): string {
+/** WebSocket URL for the realtime gateway. The gateway serves /ws/agent at
+ * the ROOT (a separate service in prod, reverse-proxied by nginx; a vite
+ * proxy forwards /ws in dev). VITE_WS_BASE overrides for split hosts. */
+export function wsUrl(params: Record<string, string | number>, path = "/ws/agent"): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const base = API_BASE.startsWith("http")
-    ? API_BASE.replace(/^http/, "ws")
-    : `${proto}//${location.host}${API_BASE}`;
+  const override = import.meta.env.VITE_WS_BASE as string | undefined;
+  const base = override
+    ? override.replace(/^http/, "ws").replace(/\/$/, "")
+    : `${proto}//${location.host}`;
   const usp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) usp.set(k, String(v));
-  return `${base}/ws?${usp.toString()}`;
+  return `${base}${path}?${usp.toString()}`;
 }

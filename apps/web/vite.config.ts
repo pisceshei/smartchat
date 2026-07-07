@@ -15,7 +15,16 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
+      },
+      // realtime gateway runs as a separate service (:8001) — see plan A.8
+      "/ws": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
         ws: true,
+      },
+      "/widget": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
       },
     },
   },

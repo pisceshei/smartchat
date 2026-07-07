@@ -191,7 +191,7 @@ export function CustomerPanel({ conversation }: { conversation: Conversation }) 
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600 }}>{c?.display_name ?? t("inbox.cust.unnamed")}</div>
                     <div style={{ fontSize: 12, color: "var(--sc-text-tertiary)" }}>
-                      {t("inbox.cust.oneId")}: <span className="sc-mono">{c?.one_id ?? c?.id.slice(0, 8)}</span>
+                      {t("inbox.cust.oneId")}: <span className="sc-mono">{c?.one_id ?? c?.id?.slice(0, 8)}</span>
                     </div>
                   </div>
                 </div>
