@@ -1,0 +1,24 @@
+{
+  "name": "@smartchat/widget",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SmartChat embeddable visitor widget: loader (vanilla, <25KB) + chat app (Preact, runs in iframe)",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:loader && npm run build:chat && node scripts/size-check.mjs",
+    "build:loader": "vite build --config vite.loader.config.ts",
+    "build:chat": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "demo": "node scripts/dev-server.mjs"
+  },
+  "dependencies": {
+    "preact": "^10.24.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
+  }
+}

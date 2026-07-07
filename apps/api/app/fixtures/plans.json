@@ -1,0 +1,88 @@
+{
+  "plans": [
+    {
+      "code": "free",
+      "name": "Free",
+      "price_usd_month": 0,
+      "sort_order": 0,
+      "limits": {
+        "seats": 3,
+        "official_channels": 1,
+        "hosted_devices": 1,
+        "widgets": 1,
+        "mac_monthly": 100,
+        "monthly_replies": 1000,
+        "ai_points_monthly": 10000,
+        "broadcast": false,
+        "brand_removal": false,
+        "openapi": false,
+        "webhook": false,
+        "history_days": 30,
+        "translation_chars_monthly": 100000
+      }
+    },
+    {
+      "code": "pro",
+      "name": "Pro",
+      "price_usd_month": 15.9,
+      "sort_order": 1,
+      "limits": {
+        "seats": 10,
+        "official_channels": 5,
+        "hosted_devices": 3,
+        "widgets": 5,
+        "mac_monthly": 3000,
+        "monthly_replies": -1,
+        "ai_points_monthly": 100000,
+        "broadcast": true,
+        "brand_removal": true,
+        "openapi": false,
+        "webhook": false,
+        "history_days": 365,
+        "translation_chars_monthly": 1000000
+      }
+    },
+    {
+      "code": "max",
+      "name": "Max",
+      "price_usd_month": 199,
+      "sort_order": 2,
+      "limits": {
+        "seats": 30,
+        "official_channels": 20,
+        "hosted_devices": 10,
+        "widgets": 20,
+        "mac_monthly": 50000,
+        "monthly_replies": -1,
+        "ai_points_monthly": 1000000,
+        "broadcast": true,
+        "brand_removal": true,
+        "openapi": true,
+        "webhook": true,
+        "history_days": -1,
+        "translation_chars_monthly": 10000000
+      }
+    },
+    {
+      "code": "custom",
+      "name": "Custom",
+      "price_usd_month": null,
+      "sort_order": 3,
+      "limits": {
+        "seats": -1,
+        "official_channels": -1,
+        "hosted_devices": -1,
+        "widgets": -1,
+        "mac_monthly": -1,
+        "monthly_replies": -1,
+        "ai_points_monthly": 1000000,
+        "broadcast": true,
+        "brand_removal": true,
+        "openapi": true,
+        "webhook": true,
+        "history_days": -1,
+        "translation_chars_monthly": -1
+      }
+    }
+  ]
+}
