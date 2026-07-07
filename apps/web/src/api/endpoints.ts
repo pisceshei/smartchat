@@ -1,6 +1,27 @@
 /** Generated-style typed endpoints matching the backend module routes
  *  (apps/api/app/modules/*). One namespace per backend module. */
-import { http } from "./client";
+import { API_BASE, http } from "./client";
+import { useAuthStore } from "@/stores/auth";
+import type {
+  AiAgent,
+  ComposerAssistMode,
+  Flow,
+  FlowCategory,
+  FlowGraph,
+  FlowStats7d,
+  FlowSummary,
+  FlowTemplate,
+  FlowTestResult,
+  FlowValidationResult,
+  Intent,
+  KbCollection,
+  KbDocType,
+  KbDocument,
+  KbFaqPair,
+  KeywordDict,
+  KeywordDictItem,
+  TranslateResult,
+} from "./types";
 import type {
   AuthOut,
   ApiTokenCreated,
@@ -364,3 +385,276 @@ export const filesApi = {
     return http<FileRef>("POST", "/files", { body: fd });
   },
 };
+
+/* ============================================================ P2: automation */
+
+export const flowsApi = {
+  /* categories (left folder tree) */
+  categories: () => http<FlowCategory[]>("GET", "/flow-categories"),
+  createCategory: (body: { name: string }) =>
+    http<FlowCategory>("POST", "/flow-categories", { body }),
+  renameCategory: (id: string, body: { name: string }) =>
+    http<FlowCategory>("PATCH", `/flow-categories/${id}`, { body }),
+  removeCategory: (id: string) => http<void>("DELETE", `/flow-categories/${id}`),
+
+  /* flow list + crud */
+  list: (params: { category_id?: string; q?: string } = {}) =>
+    http<FlowSummary[]>("GET", "/flows", { query: params }),
+  get: (id: string) => http<Flow>("GET", `/flows/${id}`),
+  create: (body: {
+    name: string;
+    channel_type: string;
+    category_id?: string | null;
+    template_slug?: string | null;
+  }) => http<Flow>("POST", "/flows", { body }),
+  update: (
+    id: string,
+    body: Partial<{
+      name: string;
+      enabled: boolean;
+      channel_type: string;
+      category_id: string | null;
+      priority: number;
+    }>,
+  ) => http<FlowSummary>("PATCH", `/flows/${id}`, { body }),
+  duplicate: (id: string) => http<Flow>("POST", `/flows/${id}/duplicate`),
+  remove: (id: string) => http<void>("DELETE", `/flows/${id}`),
+
+  /* editor — draft saved via PATCH /flows/{id} {draft_graph} (no separate route) */
+  saveDraft: (id: string, graph: FlowGraph) =>
+    http<Flow>("PATCH", `/flows/${id}`, { body: { draft_graph: graph } }),
+  validate: (id: string, graph: FlowGraph) =>
+    http<FlowValidationResult>("POST", `/flows/${id}/validate`, { body: { graph } }),
+  publish: (id: string, graph: FlowGraph) =>
+    http<FlowValidationResult & { version_id?: string }>("POST", `/flows/${id}/publish`, {
+      body: { graph },
+    }),
+  testRun: (id: string, body: { graph: FlowGraph; input?: string }) =>
+    http<FlowTestResult>("POST", `/flows/${id}/test-run`, { body }),
+
+  /* data drill-down */
+  stats: (id: string, params: { from?: string; to?: string } = {}) =>
+    http<{ summary: FlowStats7d; nodes: Record<string, number> }>("GET", `/flows/${id}/stats`, {
+      query: params,
+    }),
+
+  /* template gallery — "use" = create a flow seeded from the template slug */
+  templates: () => http<FlowTemplate[]>("GET", "/flow-templates"),
+  useTemplate: (
+    template: { id: string; channel_type: string },
+    body: { name: string; category_id?: string | null },
+  ) =>
+    http<Flow>("POST", "/flows", {
+      body: {
+        name: body.name,
+        channel_type: template.channel_type,
+        category_id: body.category_id ?? null,
+        template_slug: template.id,
+      },
+    }),
+};
+
+export const keywordDictsApi = {
+  list: () => http<KeywordDict[]>("GET", "/flow-keyword-dicts"),
+  create: (body: { name: string }) => http<KeywordDict>("POST", "/flow-keyword-dicts", { body }),
+  rename: (id: string, body: { name: string }) =>
+    http<KeywordDict>("PATCH", `/flow-keyword-dicts/${id}`, { body }),
+  remove: (id: string) => http<void>("DELETE", `/flow-keyword-dicts/${id}`),
+  items: (dictId: string) =>
+    http<KeywordDictItem[]>("GET", `/flow-keyword-dicts/${dictId}/items`),
+  setItems: (dictId: string, keywords: string[]) =>
+    http<KeywordDictItem[]>("PUT", `/flow-keyword-dicts/${dictId}/items`, { body: { keywords } }),
+};
+
+/* ================================================================= P2: AI */
+
+export const aiApi = {
+  listAgents: () => http<AiAgent[]>("GET", "/ai/agents"),
+  getAgent: (id: string) => http<AiAgent>("GET", `/ai/agents/${id}`),
+  createAgent: (body: Partial<AiAgent> & { name: string }) =>
+    http<AiAgent>("POST", "/ai/agents", { body }),
+  updateAgent: (id: string, body: Partial<AiAgent>) =>
+    http<AiAgent>("PATCH", `/ai/agents/${id}`, { body }),
+  removeAgent: (id: string) => http<void>("DELETE", `/ai/agents/${id}`),
+};
+
+export const kbApi = {
+  collections: () => http<KbCollection[]>("GET", "/ai/kb/collections"),
+  createCollection: (body: { name: string; description?: string }) =>
+    http<KbCollection>("POST", "/ai/kb/collections", { body }),
+  updateCollection: (id: string, body: { name?: string; description?: string }) =>
+    http<KbCollection>("PATCH", `/ai/kb/collections/${id}`, { body }),
+  removeCollection: (id: string) => http<void>("DELETE", `/ai/kb/collections/${id}`),
+
+  documents: (collectionId: string) =>
+    http<KbDocument[]>("GET", `/ai/kb/collections/${collectionId}/documents`),
+  /* Backend has ONE document-create route discriminated by source_type
+   * (prose/upload/url → text; faq/product → items[]). */
+  addFile: async (collectionId: string, file: File): Promise<KbDocument> => {
+    const text = await file.text(); // client-side extract (binary/PDF is P3)
+    return http<KbDocument>("POST", `/ai/kb/collections/${collectionId}/documents`, {
+      body: { title: file.name, source_type: "upload", text },
+    });
+  },
+  addFaq: (collectionId: string, body: { title: string; pairs: KbFaqPair[] }) =>
+    http<KbDocument>("POST", `/ai/kb/collections/${collectionId}/documents`, {
+      body: { title: body.title, source_type: "faq", items: body.pairs },
+    }),
+  addUrl: (collectionId: string, body: { url: string }) =>
+    http<KbDocument>("POST", `/ai/kb/collections/${collectionId}/documents`, {
+      body: { title: body.url, source_type: "url", source_ref: body.url },
+    }),
+  addText: (collectionId: string, body: { title: string; text: string }) =>
+    http<KbDocument>("POST", `/ai/kb/collections/${collectionId}/documents`, {
+      body: { title: body.title, source_type: "prose", text: body.text },
+    }),
+  importProducts: (collectionId: string, body: { source: string; items?: unknown[] }) =>
+    http<KbDocument>("POST", `/ai/kb/collections/${collectionId}/documents`, {
+      body: { title: "商品匯入", source_type: "product", items: body.items ?? [], source_ref: body.source },
+    }),
+  reingest: (_collectionId: string, docId: string) =>
+    http<KbDocument>("POST", `/ai/kb/documents/${docId}/reingest`),
+  removeDocument: (_collectionId: string, docId: string) =>
+    http<void>("DELETE", `/ai/kb/documents/${docId}`),
+};
+
+export const intentsApi = {
+  list: () => http<Intent[]>("GET", "/ai/intents"),
+  create: (body: { name: string; description?: string; examples: string[] }) =>
+    http<Intent>("POST", "/ai/intents", { body }),
+  update: (id: string, body: Partial<Intent>) =>
+    http<Intent>("PATCH", `/ai/intents/${id}`, { body }),
+  remove: (id: string) => http<void>("DELETE", `/ai/intents/${id}`),
+};
+
+/* --------------------------------------------------------- translate / assist */
+
+export const translateApi = {
+  /** On-demand translation for the inbox inline display + outbound preview.
+   * Backend contract uses dst_lang/src_lang. */
+  translate: (body: {
+    text: string;
+    target_lang: string;
+    source_lang?: string | null;
+    engine?: string;
+  }) =>
+    http<TranslateResult>("POST", "/ai/translate", {
+      body: { text: body.text, dst_lang: body.target_lang, src_lang: body.source_lang ?? null },
+    }),
+
+  /** Translate one existing message (persists + realtime patch). */
+  translateMessage: (conversationId: string, messageId: string, agentLang?: string) =>
+    http<TranslateResult>(
+      "POST",
+      `/ai/conversations/${conversationId}/messages/${messageId}/translate`,
+      { body: { agent_lang: agentLang ?? null } },
+    ),
+};
+
+/** Composer AI-assist streams tokens over SSE (text/event-stream). We read the
+ * body reader directly (the JSON `http` helper can't stream). Emits each delta
+ * to `onDelta` and resolves with the full text. Falls back to a plain-text
+ * body if the server doesn't use SSE framing. */
+export async function composeAssistStream(
+  body: {
+    conversation_id: string;
+    mode: ComposerAssistMode;
+    text: string;
+    target_lang?: string;
+    tone?: string;
+  },
+  onDelta: (full: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { token, workspaceId } = useAuthStore.getState();
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+
+  // Backend contract: POST /ai/assist {op, text, params}; SSE frames
+  // {type:delta,text} … {type:done,text,balance_after} | {type:error,code,detail}
+  const params: Record<string, unknown> = {};
+  if (body.tone) params.tone = body.tone;
+  if (body.target_lang) params.target_lang = body.target_lang;
+  const res = await fetch(`${API_BASE}/ai/assist`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ op: body.mode, text: body.text, params }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail: string | undefined;
+    try {
+      detail = ((await res.json()) as { detail?: string }).detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail ?? `assist ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+
+  const pushDelta = (piece: string) => {
+    if (!piece) return;
+    full += piece;
+    onDelta(full);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE frames are separated by a blank line; tolerate bare \n streams too.
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() ?? "";
+    for (const line of parts) {
+      const trimmed = line.trimStart();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("data:")) {
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const obj = JSON.parse(payload) as {
+            type?: string;
+            delta?: string;
+            text?: string;
+            code?: string;
+            detail?: string;
+          };
+          if (obj.type === "error") {
+            throw new Error(obj.detail ?? obj.code ?? "assist error");
+          }
+          if (obj.type === "done") {
+            // authoritative full text — replace accumulator, don't append
+            full = obj.text ?? full;
+            onDelta(full);
+          } else {
+            // {type:delta,text:piece} or legacy {delta}
+            pushDelta(obj.delta ?? obj.text ?? "");
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.includes("assist")) throw e;
+          pushDelta(payload);
+        }
+      } else {
+        // non-SSE plain text line
+        pushDelta(line + "\n");
+      }
+    }
+  }
+  if (buffer.trim()) pushDelta(buffer);
+  return full;
+}
+
+/** Doc-type labels for the KB add-document picker (kept out of i18n since the
+ * set is small and stable, mirroring constants/channels.ts precedent). */
+export const KB_DOC_TYPES: { type: KbDocType; label: string }[] = [
+  { type: "file", label: "上傳檔案" },
+  { type: "faq", label: "FAQ 問答" },
+  { type: "product", label: "商品匯入" },
+  { type: "url", label: "網址匯入" },
+  { type: "text", label: "純文字" },
+];

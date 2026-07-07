@@ -1,20 +1,24 @@
 /** Composer: 回覆/備註 tabs, quick-reply "/" picker, emoji, attachments,
  *  Enter-send / Shift+Enter-newline, optimistic send. */
 import {
+  OpenAIOutlined as AiAssistIcon,
   PaperClipOutlined,
   SendOutlined,
   SmileOutlined,
   StarFilled,
   ThunderboltOutlined,
+  TranslationOutlined,
 } from "@ant-design/icons";
-import { App, Button, Input, Popover, Tabs, Tag, Upload } from "antd";
+import { App, Button, Input, Popover, Tabs, Tag, Tooltip, Upload } from "antd";
 import type { InputRef } from "antd";
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { filesApi, quickRepliesApi } from "@/api/endpoints";
 import type { ContentBlock, Conversation, FileRef, QuickReply } from "@/api/types";
 import { realtime } from "@/api/ws";
+import { TRANSLATE_LANGS } from "@/constants/channels";
 import { t } from "@/i18n";
+import { AiAssistPopover } from "./AiAssistPopover";
 import { newClientId, useSendMessage } from "./hooks";
 
 const EMOJIS = [
@@ -102,6 +106,7 @@ export function Composer({ conversation }: { conversation: Conversation }) {
   const [attachments, setAttachments] = useState<FileRef[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const inputRef = useRef<InputRef>(null);
   const lastTypingSent = useRef(0);
   const send = useSendMessage(conversation.id);
@@ -109,6 +114,10 @@ export function Composer({ conversation }: { conversation: Conversation }) {
   const isNote = mode === "note";
   const slashActive = text.startsWith("/");
   const slashSearch = slashActive ? text.slice(1) : "";
+  const translateLangLabel = useMemo(() => {
+    const code = conversation.translate?.customer_lang ?? conversation.contact?.language ?? "";
+    return TRANSLATE_LANGS.find((l) => l.value === code)?.label ?? code;
+  }, [conversation.translate?.customer_lang, conversation.contact?.language]);
 
   const doSend = () => {
     const trimmed = text.trim();
@@ -277,7 +286,39 @@ export function Composer({ conversation }: { conversation: Conversation }) {
           />
         </Popover>
 
+        {!isNote && (
+          <Popover
+            open={aiOpen}
+            onOpenChange={setAiOpen}
+            trigger="click"
+            placement="topLeft"
+            destroyTooltipOnHide
+            content={
+              <AiAssistPopover
+                text={text}
+                conversationId={conversation.id}
+                customerLang={conversation.translate?.customer_lang ?? conversation.contact?.language}
+                onApply={(v) => setText(v)}
+                onClose={() => setAiOpen(false)}
+              />
+            }
+          >
+            <Tooltip title={t("inbox.assist.title")}>
+              <Button type="text" size="small" icon={<AiAssistIcon />} aria-label={t("inbox.assist.title")} />
+            </Tooltip>
+          </Popover>
+        )}
+
         <span className="sc-composer-hint">
+          {!isNote && conversation.translate?.enabled && (
+            <Tag
+              icon={<TranslationOutlined />}
+              color="blue"
+              style={{ fontSize: 11, lineHeight: "18px", margin: 0, padding: "0 6px" }}
+            >
+              {t("inbox.translate.onSend", { lang: translateLangLabel })}
+            </Tag>
+          )}
           <span>{t("inbox.composer.enterHint")}</span>
           <Button
             type="primary"

@@ -530,3 +530,220 @@ export interface FilterPredicate {
   op: "contains" | "eq" | "neq" | "empty" | "not_empty";
   value?: string | null;
 }
+
+/* ============================================================ P2: automation
+ * Flow-engine graph schema mirrors plan 附錄 B.1: nodes/edges + port protocol
+ * (out / button:<id> / branch:<idx> / else / answered / timeout / invalid /
+ * success / failed). `kind` is a dotted "<category>.<name>" key resolved
+ * against the node catalog (pages/automation/nodes.ts). Field names are
+ * snake_case so the graph round-trips to the backend verbatim. */
+
+export type FlowChannelScope = ChannelType | "all";
+export type NodeCategory = "trigger" | "condition" | "action";
+
+export interface FlowNode {
+  id: string;
+  kind: string;
+  category: NodeCategory;
+  position: { x: number; y: number };
+  title?: string | null;
+  config: Record<string, unknown>;
+}
+
+export interface FlowEdge {
+  id: string;
+  source: string;
+  /** Handle id on the source node = the plan's port protocol value. */
+  source_port: string;
+  target: string;
+}
+
+export interface FlowGraph {
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
+/** 7-day funnel columns replicated from SaleSmartly's flow list. */
+export interface FlowStats7d {
+  triggers: number; // 觸發次數 = sessions created
+  users: number; // 觸發人數 = distinct contacts
+  engagement: number; // 參與度 0..1
+  completion: number; // 完成度 0..1
+}
+
+export interface FlowSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  channel_type: FlowChannelScope;
+  category_id?: string | null;
+  priority: number;
+  stats_7d?: FlowStats7d | null;
+  published_version_id?: string | null;
+  has_draft?: boolean;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface Flow extends FlowSummary {
+  draft_graph: FlowGraph;
+}
+
+export interface FlowCategory {
+  id: string;
+  name: string;
+  flow_count?: number;
+}
+
+export interface FlowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  channel_type: FlowChannelScope;
+  node_count?: number;
+  tags?: string[];
+  preview_graph?: FlowGraph | null;
+}
+
+export interface FlowValidationError {
+  node_id?: string | null;
+  code: string;
+  message: string;
+}
+
+export interface FlowValidationResult {
+  ok: boolean;
+  errors: FlowValidationError[];
+}
+
+export interface FlowTestStep {
+  node_id: string;
+  kind: string;
+  title: string;
+  detail?: string | null;
+  status: "ok" | "waiting" | "skipped" | "error";
+}
+
+export interface FlowTestResult {
+  steps: FlowTestStep[];
+  preview_messages?: MessageContent[];
+}
+
+/* --------------------------------------------------------------- keyword dicts */
+
+export interface KeywordDict {
+  id: string;
+  name: string;
+  item_count?: number;
+  created_at?: string;
+}
+
+export interface KeywordDictItem {
+  id: string;
+  dict_id: string;
+  keyword: string;
+}
+
+/* ================================================================= P2: AI */
+
+export type AiMode = "builtin" | "external";
+
+export interface AiPersona {
+  role_prompt: string;
+  tone: string;
+  languages: string[];
+  greeting: string;
+  refuse_topics: string[];
+}
+
+export interface AiSkills {
+  kb_answer: boolean;
+  product_card: boolean;
+  lead_capture: boolean;
+  handoff: boolean;
+}
+
+export interface AiEscalationRules {
+  keywords: string[];
+  intent_ids: string[];
+  max_kb_misses: number;
+  outside_hours: boolean;
+}
+
+export interface AiAgent {
+  id: string;
+  member_id?: string | null;
+  name: string;
+  avatar_url?: string | null;
+  enabled: boolean;
+  model_tier: "fast" | "smart";
+  mode: AiMode;
+  persona: AiPersona;
+  skills: AiSkills;
+  kb_collection_ids: string[];
+  monthly_quota: number;
+  used_this_month?: number;
+  escalation: AiEscalationRules;
+  webhook_url?: string | null;
+  webhook_secret?: string | null;
+  created_at?: string;
+}
+
+/* ---------------------------------------------------------------- knowledge base */
+
+export type KbDocType = "file" | "faq" | "product" | "url" | "text";
+export type KbIngestStatus = "pending" | "processing" | "ready" | "failed";
+
+export interface KbCollection {
+  id: string;
+  name: string;
+  description?: string | null;
+  document_count?: number;
+  chunk_count?: number;
+  created_at?: string;
+}
+
+export interface KbDocument {
+  id: string;
+  collection_id: string;
+  title: string;
+  doc_type: KbDocType;
+  source?: string | null;
+  status: KbIngestStatus;
+  chunk_count?: number;
+  error?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface KbFaqPair {
+  question: string;
+  answer: string;
+}
+
+/* -------------------------------------------------------------------- intents */
+
+export interface Intent {
+  id: string;
+  name: string;
+  description?: string | null;
+  examples: string[];
+  enabled: boolean;
+  created_at?: string;
+}
+
+/* ------------------------------------------------------- translate / composer */
+
+export type ComposerAssistMode =
+  | "rewrite"
+  | "expand"
+  | "shorten"
+  | "tone"
+  | "fix_grammar"
+  | "translate_draft";
+
+export interface TranslateResult {
+  text: string;
+  detected_lang?: string | null;
+}

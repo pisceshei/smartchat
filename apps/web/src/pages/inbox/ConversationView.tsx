@@ -28,8 +28,8 @@ import {
 } from "antd";
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { tagsApi } from "@/api/endpoints";
-import type { Conversation, Message } from "@/api/types";
+import { tagsApi, translateApi } from "@/api/endpoints";
+import type { Conversation, ConversationTranslateConfig, Message } from "@/api/types";
 import { ChannelIcon } from "@/components/ChannelIcon";
 import { MessageBlocks } from "@/components/MessageBlocks";
 import { PresenceDot } from "@/components/PresenceDot";
@@ -81,7 +81,69 @@ function DeliveryTick({ status }: { status: Message["delivery_status"] }) {
   }
 }
 
-function MessageRow({ msg, contactName }: { msg: Message; contactName: string }) {
+/** Inline translation for a message: shows the cached translation, or lazily
+ *  fetches one via the translate API when two-way translation is on. A small
+ *  link collapses the 譯文 back to the original bubble. */
+function MessageTranslation({
+  msg,
+  targetLang,
+  active,
+}: {
+  msg: Message;
+  targetLang?: string | null;
+  active: boolean;
+}) {
+  const cached = msg.translations ? Object.values(msg.translations)[0] : null;
+  const [show, setShow] = useState(true);
+  const hasText = !!(msg.text_plain && msg.text_plain.trim());
+  const needFetch = active && !cached && !!targetLang && hasText && show;
+
+  const q = useQuery({
+    queryKey: ["msg-tx", msg.id, targetLang],
+    queryFn: () => translateApi.translate({ text: msg.text_plain as string, target_lang: targetLang as string }),
+    enabled: needFetch,
+    staleTime: Infinity,
+    retry: 1,
+  });
+
+  const translated = cached ?? q.data?.text ?? null;
+  if (!translated && !q.isFetching) return null;
+
+  return (
+    <div className="sc-translated">
+      {show &&
+        (q.isFetching && !translated ? (
+          <span style={{ color: "var(--sc-text-tertiary)" }}>
+            <TranslationOutlined style={{ marginRight: 4 }} />
+            {t("inbox.translate.translating")}
+          </span>
+        ) : (
+          <div>
+            <TranslationOutlined style={{ marginRight: 4 }} />
+            {translated}
+          </div>
+        ))}
+      {translated && (
+        <a
+          style={{ fontSize: 11.5, display: "inline-block", marginTop: 2 }}
+          onClick={() => setShow((v) => !v)}
+        >
+          {show ? t("inbox.translate.showOriginal") : t("inbox.translate.showTranslation")}
+        </a>
+      )}
+    </div>
+  );
+}
+
+function MessageRow({
+  msg,
+  contactName,
+  translate,
+}: {
+  msg: Message;
+  contactName: string;
+  translate?: ConversationTranslateConfig | null;
+}) {
   const sysBlock = msg.content?.blocks?.find((b) => b.kind === "system_event");
   if (msg.sender_type === "system" || sysBlock) {
     return (
@@ -96,7 +158,8 @@ function MessageRow({ msg, contactName }: { msg: Message; contactName: string })
   const out = msg.direction === "out";
   const fromAutomation = msg.sender_type === "automation" || msg.sender_type === "flow" || !!msg.source_flow_id;
   const fromAi = msg.sender_type === "ai_agent";
-  const translated = msg.translations && Object.values(msg.translations)[0];
+  // inbound → agent language; outbound → customer language
+  const targetLang = out ? translate?.customer_lang : translate?.agent_lang;
 
   return (
     <div className={`sc-msg-row sc-fade-in${out ? " sc-out" : ""}`}>
@@ -113,12 +176,7 @@ function MessageRow({ msg, contactName }: { msg: Message; contactName: string })
             </div>
           )}
           <MessageBlocks content={msg.content} />
-          {translated && (
-            <div className="sc-translated">
-              <TranslationOutlined style={{ marginRight: 4 }} />
-              {translated}
-            </div>
-          )}
+          <MessageTranslation msg={msg} targetLang={targetLang} active={!!translate?.enabled} />
         </div>
         <div className="sc-msg-meta">
           {out && msg.sender_name && <span>{msg.sender_name}</span>}
@@ -395,7 +453,7 @@ export function ConversationView({ conversation }: { conversation: Conversation 
               return (
                 <div key={msg.id}>
                   {showDate && <div className="sc-date-sep">{dateSeparator(msg.created_at)}</div>}
-                  <MessageRow msg={msg} contactName={contactName} />
+                  <MessageRow msg={msg} contactName={contactName} translate={translateCfg} />
                 </div>
               );
             })}

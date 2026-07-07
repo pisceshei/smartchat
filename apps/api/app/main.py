@@ -25,6 +25,9 @@ MODULE_ROUTERS = [
     "apps.api.app.modules.hooks.router",
     "apps.api.app.modules.settings_mod.router",
     "apps.api.app.modules.openapi_public.router",
+    "apps.api.app.modules.ai.router",
+    "apps.api.app.modules.translate.router",
+    "apps.api.app.modules.flows.router",
 ]
 
 

@@ -3,6 +3,18 @@ Base.metadata (alembic env.py and create_all rely on that)."""
 from __future__ import annotations
 
 from ..db import Base
+from .ai import (
+    EMBED_DIM,
+    AIAgent,
+    AIAgentUsage,
+    AIPointBalance,
+    AIPointPrice,
+    Intent,
+    KBChunk,
+    KBCollection,
+    KBDocument,
+    TranslationUsage,
+)
 from .base import uuid7
 from .channels import CHANNEL_TYPES, ChannelAccount, DeviceBridge, Widget
 from .contacts import (
@@ -19,6 +31,20 @@ from .conversations import (
     ConversationAssignment,
     ConversationRead,
     ConversationSession,
+)
+from .flows import (
+    Flow,
+    FlowCategory,
+    FlowSession,
+    FlowSessionStep,
+    FlowStatsDaily,
+    FlowStatsUser,
+    FlowTemplate,
+    FlowTrigger,
+    FlowTriggerLog,
+    FlowVersion,
+    KeywordDict,
+    KeywordDictItem,
 )
 from .members import (
     MemberDailyStats,
@@ -68,6 +94,7 @@ __all__ = [
     "uuid7",
     "CHANNEL_TYPES",
     "PARTITIONED_TABLES",
+    "EMBED_DIM",
     # tenancy
     "Plan",
     "Workspace",
@@ -122,4 +149,27 @@ __all__ = [
     "CustomFieldDefinition",
     "EventRow",
     "Timer",
+    # flows (P2)
+    "FlowCategory",
+    "Flow",
+    "FlowVersion",
+    "FlowTrigger",
+    "KeywordDict",
+    "KeywordDictItem",
+    "FlowSession",
+    "FlowSessionStep",
+    "FlowTriggerLog",
+    "FlowStatsDaily",
+    "FlowStatsUser",
+    "FlowTemplate",
+    # ai (P2)
+    "AIAgent",
+    "AIAgentUsage",
+    "Intent",
+    "AIPointPrice",
+    "AIPointBalance",
+    "TranslationUsage",
+    "KBCollection",
+    "KBDocument",
+    "KBChunk",
 ]

@@ -80,8 +80,23 @@ async def reconcile_points_task(ctx: dict[str, Any], workspace_id: str) -> int:
         return await points.reconcile_balance(session, ctx["redis"], uuid.UUID(workspace_id))
 
 
+@task
+async def flush_flow_stats_task(ctx: dict[str, Any]) -> int:
+    """Flush the flow-engine's Redis hash counters into flow_stats_daily +
+    re-materialise distinct-user counts (plan B.1: every 60s)."""
+    from apps.flow_engine import stats as flow_stats
+
+    return await flow_stats.flush(ctx["session_factory"], ctx["redis"])
+
+
 # safety-net crons (beat is the primary scheduler; these cover beat downtime)
 register_cron(cron(monthly_grants_task, hour=0, minute=17, run_at_startup=False))
+# roll flow analytics once a minute (plan B.1 統計每 60s 落庫)
+register_cron(cron(flush_flow_stats_task, second={0}, run_at_startup=False))
+
+# P2 AI subsystem tasks (KB ingest, idle AI resume, AI event drain) register
+# themselves via the @task/register_cron decorators on import.
+from ..ai import jobs as _ai_jobs  # noqa: E402,F401
 
 
 class WorkerSettings:

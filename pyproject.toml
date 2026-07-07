@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0.30",
     "asyncpg>=0.29",
+    "pgvector>=0.3",
     "alembic>=1.13",
     "pydantic>=2.8",
     "pydantic-settings>=2.3",
@@ -27,6 +28,7 @@ dependencies = [
     "orjson>=3.10",
     "segno>=1.6",
     "user-agents>=2.2",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

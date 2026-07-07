@@ -250,9 +250,17 @@ def _assignment_settings(workspace: Workspace) -> dict[str, Any]:
 
 
 async def _bot_flow_available(session: AsyncSession, conversation: Conversation) -> bool:
-    """P1: a bot handles the conversation when the widget has a bound
-    automation (widgets.default_flow_id). Other channels gain flow triggers in
-    P2 via the indexed flow_triggers table."""
+    """A bot handles the conversation when a matching enabled automation flow
+    exists. P2 generalizes this to any channel via the indexed flow_triggers
+    table (modules.flows.service.flow_bot_available); the widget
+    default_flow_id path is the P1 fallback if the flows module is absent."""
+    try:
+        from ..modules.flows.service import flow_bot_available
+
+        if await flow_bot_available(session, conversation):
+            return True
+    except ImportError:
+        pass
     if conversation.channel_type != "widget":
         return False
     widget = (

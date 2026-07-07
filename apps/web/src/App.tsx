@@ -1,10 +1,14 @@
 import {
+  AimOutlined,
   ApiOutlined,
   AppstoreOutlined,
   ContactsOutlined,
   DatabaseOutlined,
   GlobalOutlined,
   MessageOutlined,
+  PartitionOutlined,
+  ReadOutlined,
+  RobotOutlined,
   SafetyOutlined,
   ScheduleOutlined,
   TagsOutlined,
@@ -24,6 +28,12 @@ import { CustomersPage } from "@/pages/customers/CustomersPage";
 import { CustomFieldsPage } from "@/pages/customers/CustomFieldsPage";
 import { QuickRepliesPage } from "@/pages/customers/QuickRepliesPage";
 import { TagsPage } from "@/pages/customers/TagsPage";
+import { AiMembersPage } from "@/pages/ai/AiMembersPage";
+import { IntentsPage } from "@/pages/ai/IntentsPage";
+import { KnowledgePage } from "@/pages/ai/KnowledgePage";
+import { FlowEditor } from "@/pages/automation/FlowEditor";
+import { FlowsPage } from "@/pages/automation/FlowsPage";
+import { KeywordDictsPage } from "@/pages/automation/KeywordDictsPage";
 import { InboxPage } from "@/pages/inbox/InboxPage";
 import { ChannelsPage } from "@/pages/integrations/ChannelsPage";
 import { WidgetConfigPage } from "@/pages/integrations/WidgetConfigPage";
@@ -98,7 +108,31 @@ export function App() {
         </Route>
 
         <Route path="/marketing" element={<ComingSoon title={t("nav.marketing")} />} />
-        <Route path="/automation" element={<ComingSoon title={t("nav.automation")} />} />
+
+        {/* full-screen flow canvas — sibling of the section layout so it fills the shell */}
+        <Route path="/automation/flows/:flowId" element={<FlowEditor />} />
+        <Route
+          path="/automation"
+          element={
+            <SectionLayout
+              title={t("auto.title")}
+              items={[
+                { key: "/automation", label: t("auto.nav.flows"), icon: <PartitionOutlined /> },
+                { key: "/automation/keywords", label: t("auto.nav.keywords"), icon: <ReadOutlined /> },
+                { key: "/automation/ai-members", label: t("auto.nav.aiMembers"), icon: <RobotOutlined /> },
+                { key: "/automation/knowledge", label: t("auto.nav.knowledge"), icon: <DatabaseOutlined /> },
+                { key: "/automation/intents", label: t("auto.nav.intents"), icon: <AimOutlined /> },
+              ]}
+            />
+          }
+        >
+          <Route index element={<FlowsPage />} />
+          <Route path="keywords" element={<KeywordDictsPage />} />
+          <Route path="ai-members" element={<AiMembersPage />} />
+          <Route path="knowledge" element={<KnowledgePage />} />
+          <Route path="intents" element={<IntentsPage />} />
+        </Route>
+
         <Route path="/reports" element={<ComingSoon title={t("nav.reports")} />} />
 
         <Route

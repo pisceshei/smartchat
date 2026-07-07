@@ -19,6 +19,7 @@ import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db import get_session
@@ -219,6 +220,12 @@ async def flush_usage_counters(
                 pipe.hincrby(key, metric, -delta)
             await pipe.execute()
             flushed += len(deltas)
+        except IntegrityError:
+            # Orphan counter for a workspace that no longer exists (e.g. a
+            # rolled-back/deleted tenant). Drop the stale key quietly instead
+            # of re-erroring every 30s.
+            await redis.delete(key)
+            log.warning("dropped orphan usage counter key %s", key)
         except Exception:  # noqa: BLE001 — one bad key must not stop the flush
             log.exception("usage flush failed for key %s", key)
     return flushed
