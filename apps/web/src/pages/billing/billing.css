@@ -1,0 +1,141 @@
+/* P3 billing styles — plan cards, order summary, duration chips. */
+
+.sc-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.sc-plan-card {
+  position: relative;
+  border: 1.5px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+  background: var(--sc-bg-container);
+  padding: 18px 18px 16px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.sc-plan-card:hover {
+  border-color: var(--sc-primary);
+}
+
+.sc-plan-card.sc-active {
+  border-color: var(--sc-primary);
+  box-shadow: 0 0 0 3px var(--sc-primary-bg);
+}
+
+.sc-plan-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sc-text-heading);
+}
+
+.sc-plan-price {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--sc-primary);
+  margin: 6px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-plan-price small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sc-text-tertiary);
+}
+
+.sc-plan-limits {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--sc-text-secondary);
+}
+
+.sc-plan-limits li {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sc-order {
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: var(--sc-bg-subtle);
+  padding: 16px;
+}
+
+.sc-order-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 13.5px;
+  color: var(--sc-text);
+}
+
+.sc-order-row.sc-order-total {
+  border-top: 1px solid var(--sc-border-strong);
+  margin-top: 6px;
+  padding-top: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--sc-text-heading);
+}
+
+.sc-order-row .sc-discount {
+  color: var(--sc-success);
+}
+
+.sc-dur-chip {
+  position: relative;
+}
+
+.sc-dur-chip .sc-dur-save {
+  position: absolute;
+  top: -8px;
+  right: -6px;
+  background: var(--sc-success);
+  color: #fff;
+  font-size: 10px;
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 15px;
+}
+
+.sc-stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.sc-stat-tile {
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: var(--sc-bg-container);
+  padding: 14px 16px;
+}
+
+.sc-stat-tile-label {
+  font-size: 12.5px;
+  color: var(--sc-text-tertiary);
+}
+
+.sc-stat-tile-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--sc-text-heading);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.sc-card-element {
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  padding: 12px;
+  background: var(--sc-bg-container);
+}

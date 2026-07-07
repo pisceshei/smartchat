@@ -98,6 +98,18 @@ register_cron(cron(flush_flow_stats_task, second={0}, run_at_startup=False))
 # themselves via the @task/register_cron decorators on import.
 from ..ai import jobs as _ai_jobs  # noqa: E402,F401
 
+# P3 reports/analytics: rollup + presence + nightly + export tasks register via
+# @task/register_cron on import.
+from ..analytics import jobs as _analytics_jobs  # noqa: E402,F401
+
+# P3 billing: hourly subscription-expiry sweep registers via @task/register_cron.
+from ..billing import jobs as _billing_jobs  # noqa: E402,F401
+
+# P3 broadcast/marketing: fan-out + scheduler + delivery-status drain + recycle
+# purge + WhatsApp reconcile; EDM launch/poll. Register via @task/register_cron.
+from ..marketing import fanout as _mkt_fanout  # noqa: E402,F401
+from ..modules.edm import service as _edm_service  # noqa: E402,F401
+
 
 class WorkerSettings:
     functions = TASKS

@@ -747,3 +747,443 @@ export interface TranslateResult {
   text: string;
   detected_lang?: string | null;
 }
+
+/* ============================================================ P3: marketing
+ * Broadcast/segment/template/split-link/EDM contracts — mirror the API ROUTE
+ * CONTRACT. snake_case round-trips to the backend verbatim. */
+
+/* ------------------------------------------------------- segments (受眾) */
+
+export type SegmentMode = "dynamic" | "static";
+
+/** AND/OR predicate tree — same predicate grammar as contacts/query, wrapped
+ *  in nestable logic groups. */
+export interface SegmentGroup {
+  logic: "and" | "or";
+  predicates: FilterPredicate[];
+  groups?: SegmentGroup[];
+}
+export type SegmentDefinition = SegmentGroup;
+
+export interface Segment {
+  id: string;
+  name: string;
+  mode: SegmentMode;
+  definition: SegmentDefinition;
+  count?: number | null;
+  created_at: string;
+}
+
+/* -------------------------------------------------------- broadcasts (群發) */
+
+export type BroadcastType = "one_time" | "recurring";
+export type BroadcastStatus =
+  | "draft"
+  | "scheduled"
+  | "running"
+  | "paused"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export interface BroadcastSchedule {
+  mode: "immediate" | "scheduled" | "recurring";
+  send_at?: string | null;
+  rrule?: string | null;
+  timezone?: string | null;
+}
+
+/** Send rules = 訊息間隔 (3–600s / 3–120s WhatsApp) + optional 發送窗 + 頻次上限. */
+export interface BroadcastSendRules {
+  interval_seconds: number;
+  window?: { start_min: number; end_min: number } | null;
+  per_contact_weekly_cap?: number | null;
+}
+
+export interface BroadcastListItem {
+  id: string;
+  name: string;
+  type: BroadcastType;
+  status: BroadcastStatus;
+  channel_type: ChannelType;
+  channel_account_id: string;
+  send_rule_summary: string;
+  planned_count: number;
+  sent_count: number;
+  delivered_count: number;
+  success_rate: number; // 0..1
+  created_at: string;
+}
+
+export interface BroadcastRun {
+  id: string;
+  scheduled_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  planned: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  skipped: number;
+}
+
+export interface Broadcast extends BroadcastListItem {
+  segment_id: string;
+  template_id: string;
+  variable_mapping: Record<string, string>;
+  schedule: BroadcastSchedule;
+  send_rules: BroadcastSendRules;
+  runs?: BroadcastRun[];
+}
+
+export type RecipientState =
+  | "planned"
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "failed"
+  | "skipped";
+
+export interface BroadcastRecipient {
+  contact_id: string;
+  display_name: string | null;
+  state: RecipientState;
+  skip_reason?: string | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+  error?: string | null;
+}
+
+export interface RecipientPage {
+  items: BroadcastRecipient[];
+  next_cursor?: string | null;
+}
+
+/* --------------------------------------------------------- message templates */
+
+export type TemplateChannel = "whatsapp" | "email" | "messenger" | "sms";
+export type WaTemplateCategory = "marketing" | "utility" | "authentication";
+export type WaApprovalStatus =
+  | "draft"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "paused"
+  | "disabled";
+
+export interface WaTemplateHeader {
+  type: "text";
+  text: string;
+}
+
+export type WaButtonKind = "none" | "call_to_action" | "quick_reply";
+
+export interface WaButtonItem {
+  type?: "url" | "phone_number" | "quick_reply";
+  text: string;
+  value?: string | null;
+}
+
+export interface WaTemplateButtons {
+  type: WaButtonKind;
+  items: WaButtonItem[];
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  channel: "whatsapp";
+  name: string;
+  label?: string | null;
+  waba_account_id: string;
+  category: WaTemplateCategory;
+  language: string;
+  header?: WaTemplateHeader | null;
+  body: { text: string };
+  footer?: { text: string } | null;
+  buttons?: WaTemplateButtons | null;
+  approval_status: WaApprovalStatus;
+  created_at: string;
+}
+
+export interface EmailTemplate {
+  id: string;
+  channel: "email";
+  name: string;
+  subject: string;
+  mjml_source: string;
+  variables: string[];
+  created_at: string;
+}
+
+export interface MessengerTemplate {
+  id: string;
+  channel: "messenger";
+  name: string;
+  payload: string;
+  message_tag?: string | null;
+  created_at: string;
+}
+
+export interface SmsTemplate {
+  id: string;
+  channel: "sms";
+  name: string;
+  text: string;
+  signature_id?: string | null;
+  created_at: string;
+}
+
+export type MsgTemplate = WhatsAppTemplate | EmailTemplate | MessengerTemplate | SmsTemplate;
+
+export interface SmsSignature {
+  id: string;
+  name: string;
+  text: string;
+  created_at?: string;
+}
+
+/* ----------------------------------------------------- split links (分流連結) */
+
+export type SplitStrategy = "random" | "time_period" | "sequential";
+
+export interface SplitLinkTimeWindow {
+  start_min: number;
+  end_min: number;
+  weekdays?: number[];
+}
+
+export interface SplitLinkTarget {
+  channel_account_id: string;
+  weight?: number | null;
+  enabled?: boolean;
+  daily_cap?: number | null;
+  time_windows?: SplitLinkTimeWindow[] | null;
+}
+
+export interface SplitLink {
+  id: string;
+  name: string;
+  channel_type: ChannelType;
+  strategy: SplitStrategy;
+  status: "active" | "disabled";
+  short_url: string;
+  qr_url: string;
+  target_count: number;
+  click_count: number;
+  created_at: string;
+  targets?: SplitLinkTarget[];
+  prefill_text?: string | null;
+}
+
+export interface SplitLinkClickSeriesPoint {
+  date: string;
+  clicks: number;
+  target_idx: number;
+}
+
+export interface SplitLinkClickStats {
+  series: SplitLinkClickSeriesPoint[];
+  total: number;
+}
+
+/* --------------------------------------------------------------- EDM 代發 */
+
+export type EdmProvider = "smtp" | "ses" | "sendgrid" | "edm_provider";
+
+export interface EdmCampaign {
+  id: string;
+  name: string;
+  provider: EdmProvider;
+  segment_id: string;
+  template_id: string;
+  schedule: BroadcastSchedule;
+  status: BroadcastStatus;
+  planned_count?: number;
+  sent_count?: number;
+  delivered_count?: number;
+  created_at: string;
+}
+
+/* ============================================================ P3: reports */
+
+export type ReportInterval = "hour" | "day" | "week" | "month";
+
+export interface ReportFilters {
+  from?: string;
+  to?: string;
+  interval?: ReportInterval;
+  channel_type?: ChannelType | null;
+  channel_account_id?: string | null;
+  member_id?: string | null;
+}
+
+export interface ServiceOverviewReport {
+  kpis: {
+    new_conversations_today: number;
+    in_progress: number;
+    online_members: number;
+  };
+  trend: { ts: string; conversations: number }[];
+}
+
+export type CustomerDimension =
+  | "member"
+  | "channel"
+  | "account"
+  | "day"
+  | "week"
+  | "month"
+  | "hour";
+
+export interface CustomersReport {
+  kpis: { new: number; new_deduped: number; repeat: number };
+  trend: { date: string; new: number; new_deduped: number; repeat: number }[];
+  detail: { dimension: CustomerDimension; rows: Record<string, unknown>[] };
+}
+
+export interface OnlineTimeRow {
+  member_id: string;
+  display_name: string;
+  online_seconds: number;
+  [k: string]: unknown;
+}
+export interface OnlineTimeReport {
+  rows: OnlineTimeRow[];
+}
+
+export interface SummaryAgentRow {
+  member_id: string;
+  display_name?: string | null;
+  msgs: number;
+  convs: number;
+  frt_avg_ms: number;
+  csat_avg: number;
+  resolution_avg_ms: number;
+  online_seconds: number;
+}
+export interface SummaryReport {
+  agents: SummaryAgentRow[];
+}
+
+export interface ChannelsReportRow {
+  channel_type: ChannelType;
+  conversations: number;
+  messages_in: number;
+  messages_out: number;
+  [k: string]: unknown;
+}
+export interface ChannelsReport {
+  rows: ChannelsReportRow[];
+}
+
+export interface AdsReport {
+  rows: Record<string, unknown>[];
+}
+
+export interface AiSummaryReport {
+  day: string;
+  text: string;
+}
+
+export interface ReportExportJob {
+  job_id: string;
+}
+export interface ReportExportStatus {
+  status: "pending" | "processing" | "ready" | "failed";
+  url?: string | null;
+}
+export interface ReportShare {
+  token: string;
+  url: string;
+}
+
+/* ============================================================ P3: billing */
+
+export interface PlanLimits {
+  seats?: number;
+  official_channels?: number;
+  hosted_devices?: number;
+  monthly_active_contacts?: number;
+  monthly_replies?: number;
+  ai_points?: number;
+  history_days?: number;
+  brand_removal?: boolean;
+  api_access?: boolean;
+  [k: string]: unknown;
+}
+
+export interface Plan {
+  code: string; // free / pro / max / custom
+  name: string;
+  price_monthly: number;
+  limits: PlanLimits;
+  is_public: boolean;
+}
+
+export interface SubscriptionAddons {
+  seats: number;
+  official_channels: number;
+  hosted_devices: number;
+}
+
+export interface Subscription {
+  plan_code: string;
+  status: string; // active / trialing / past_due / canceled …
+  current_period_end?: string | null;
+  limits_effective: PlanLimits;
+  balance: number;
+  ai_points_balance: number;
+  addons: SubscriptionAddons;
+}
+
+export type CheckoutDuration = 7 | 30 | 90 | 180 | 360 | 720;
+
+export interface OrderPreview {
+  base_price: number;
+  discount: number;
+  handling_fee: number;
+  balance_applied: number;
+  amount_due: number;
+  currency: string;
+}
+
+export interface StripeIntent {
+  client_secret?: string | null;
+  checkout_url?: string | null;
+}
+
+export interface CheckoutResult {
+  order: OrderPreview;
+  stripe: StripeIntent;
+}
+
+export interface PointsTopupResult {
+  stripe: StripeIntent;
+  price: number;
+}
+
+export interface PointsLedgerEntry {
+  delta: number;
+  reason: string;
+  ref?: string | null;
+  balance_after: number;
+  created_at: string;
+}
+export interface PointsLedgerPage {
+  items: PointsLedgerEntry[];
+  next_cursor?: string | null;
+}
+
+export interface Invoice {
+  id: string;
+  number?: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+  url?: string | null;
+  description?: string | null;
+}

@@ -29,6 +29,7 @@ dependencies = [
     "segno>=1.6",
     "user-agents>=2.2",
     "tzdata>=2024.1",
+    "stripe>=10.0",
 ]
 
 [project.optional-dependencies]

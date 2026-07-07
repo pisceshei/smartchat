@@ -28,6 +28,13 @@ MODULE_ROUTERS = [
     "apps.api.app.modules.ai.router",
     "apps.api.app.modules.translate.router",
     "apps.api.app.modules.flows.router",
+    "apps.api.app.modules.billing.router",
+    "apps.api.app.modules.reports.router",
+    "apps.api.app.modules.segments.router",
+    "apps.api.app.modules.broadcasts.router",
+    "apps.api.app.modules.msg_templates.router",
+    "apps.api.app.modules.split_links.router",
+    "apps.api.app.modules.edm.router",
 ]
 
 

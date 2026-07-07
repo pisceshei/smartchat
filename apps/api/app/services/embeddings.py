@@ -35,6 +35,29 @@ def _check_dim(vectors: list[list[float]]) -> None:
             )
 
 
+def _resolve_default_embed_client() -> LLMClientProtocol | None:
+    """Pick the embedding backend when no explicit client is passed.
+
+    Priority: an explicitly injected default (tests / DI — a client that is NOT
+    the production ``LLMClient``, e.g. a FakeLLM) wins; otherwise, when
+    ``EMBED_BASE_URL`` is set the caller should route to the bge-m3 sidecar
+    (signalled by returning ``None``); otherwise fall back to the Settings-built
+    default client. The sub2api relay has no embeddings endpoint, so in
+    production the bge sidecar path is the real one."""
+    from py_contracts.llm import LLMClient
+
+    from . import llm_client as _lc
+
+    injected = _lc._default
+    if injected is not None and not isinstance(injected, LLMClient):
+        return injected  # test / dependency-injected fake wins
+    from ..settings import get_settings
+
+    if get_settings().embed_base_url:
+        return None  # → delegate to the bge-m3 sidecar
+    return _lc.get_default_llm()
+
+
 async def embed_texts(
     texts: Sequence[str],
     *,
@@ -42,13 +65,16 @@ async def embed_texts(
     batch_size: int = DEFAULT_BATCH,
 ) -> list[list[float]]:
     """Embed a list of texts, batching requests. Returns one 1024-dim vector per
-    input, in order. Uses the injected client or the process default."""
+    input, in order. Uses the injected client, else an injected default, else the
+    bge-m3 sidecar (EMBED_BASE_URL), else the Settings default LLM client."""
     if not texts:
         return []
     if client is None:
-        from .llm_client import get_default_llm
+        client = _resolve_default_embed_client()
+        if client is None:  # production RAG swap: embed tier → bge-m3 sidecar
+            from . import embeddings_bge
 
-        client = get_default_llm()
+            return await embeddings_bge.embed_texts(texts, batch_size=batch_size)
     out: list[list[float]] = []
     for chunk in batched(texts, batch_size):
         vectors = await client.embed(chunk)

@@ -1,16 +1,27 @@
 import {
   AimOutlined,
+  ApartmentOutlined,
   ApiOutlined,
   AppstoreOutlined,
+  ClockCircleOutlined,
   ContactsOutlined,
+  CrownOutlined,
+  DashboardOutlined,
   DatabaseOutlined,
+  FileTextOutlined,
+  FundOutlined,
   GlobalOutlined,
+  MailOutlined,
   MessageOutlined,
+  NotificationOutlined,
   PartitionOutlined,
   ReadOutlined,
   RobotOutlined,
   SafetyOutlined,
   ScheduleOutlined,
+  ShareAltOutlined,
+  SwapOutlined,
+  TableOutlined,
   TagsOutlined,
   TeamOutlined,
   ThunderboltOutlined,
@@ -44,6 +55,21 @@ import { GroupsPage } from "@/pages/team/GroupsPage";
 import { MembersPage } from "@/pages/team/MembersPage";
 import { RolesPage } from "@/pages/team/RolesPage";
 import { ShiftsPage } from "@/pages/team/ShiftsPage";
+import { BroadcastsPage } from "@/pages/marketing/BroadcastsPage";
+import { EdmPage } from "@/pages/marketing/EdmPage";
+import { SplitLinksPage } from "@/pages/marketing/SplitLinksPage";
+import { TemplatesPage } from "@/pages/marketing/TemplatesPage";
+import { AdsReport } from "@/pages/reports/AdsReport";
+import { AiSummaryReport } from "@/pages/reports/AiSummaryReport";
+import { ChannelsReport } from "@/pages/reports/ChannelsReport";
+import { CustomersReport } from "@/pages/reports/CustomersReport";
+import { OnlineTimeReport } from "@/pages/reports/OnlineTimeReport";
+import { ServiceOverviewReport } from "@/pages/reports/ServiceOverviewReport";
+import { SummaryReport } from "@/pages/reports/SummaryReport";
+import { ChangePlanPage } from "@/pages/billing/ChangePlanPage";
+import { InvoicesPage } from "@/pages/billing/InvoicesPage";
+import { PointsPage } from "@/pages/billing/PointsPage";
+import { SubscriptionPage } from "@/pages/billing/SubscriptionPage";
 
 function NotFound() {
   const navigate = useNavigate();
@@ -107,7 +133,25 @@ export function App() {
           <Route path="custom-fields" element={<CustomFieldsPage />} />
         </Route>
 
-        <Route path="/marketing" element={<ComingSoon title={t("nav.marketing")} />} />
+        <Route
+          path="/marketing"
+          element={
+            <SectionLayout
+              title={t("mkt.title")}
+              items={[
+                { key: "/marketing", label: t("mkt.nav.broadcasts"), icon: <NotificationOutlined /> },
+                { key: "/marketing/edm", label: t("mkt.nav.edm"), icon: <MailOutlined /> },
+                { key: "/marketing/templates", label: t("mkt.nav.templates"), icon: <FileTextOutlined /> },
+                { key: "/marketing/split-links", label: t("mkt.nav.splitLinks"), icon: <ShareAltOutlined /> },
+              ]}
+            />
+          }
+        >
+          <Route index element={<BroadcastsPage />} />
+          <Route path="edm" element={<EdmPage />} />
+          <Route path="templates" element={<TemplatesPage />} />
+          <Route path="split-links" element={<SplitLinksPage />} />
+        </Route>
 
         {/* full-screen flow canvas — sibling of the section layout so it fills the shell */}
         <Route path="/automation/flows/:flowId" element={<FlowEditor />} />
@@ -133,7 +177,31 @@ export function App() {
           <Route path="intents" element={<IntentsPage />} />
         </Route>
 
-        <Route path="/reports" element={<ComingSoon title={t("nav.reports")} />} />
+        <Route
+          path="/reports"
+          element={
+            <SectionLayout
+              title={t("rpt.title")}
+              items={[
+                { key: "/reports", label: t("rpt.nav.customers"), icon: <TeamOutlined /> },
+                { key: "/reports/service", label: t("rpt.nav.service"), icon: <DashboardOutlined /> },
+                { key: "/reports/online-time", label: t("rpt.nav.onlineTime"), icon: <ClockCircleOutlined /> },
+                { key: "/reports/summary", label: t("rpt.nav.summary"), icon: <TableOutlined /> },
+                { key: "/reports/channels", label: t("rpt.nav.channels"), icon: <ApartmentOutlined /> },
+                { key: "/reports/ads", label: t("rpt.nav.ads"), icon: <FundOutlined /> },
+                { key: "/reports/ai", label: t("rpt.nav.ai"), icon: <RobotOutlined /> },
+              ]}
+            />
+          }
+        >
+          <Route index element={<CustomersReport />} />
+          <Route path="service" element={<ServiceOverviewReport />} />
+          <Route path="online-time" element={<OnlineTimeReport />} />
+          <Route path="summary" element={<SummaryReport />} />
+          <Route path="channels" element={<ChannelsReport />} />
+          <Route path="ads" element={<AdsReport />} />
+          <Route path="ai" element={<AiSummaryReport />} />
+        </Route>
 
         <Route
           path="/integrations"
@@ -206,8 +274,23 @@ export function App() {
 
         <Route
           path="/subscription"
-          element={<ComingSoon title={t("sub.title")} description={t("sub.hint")} />}
-        />
+          element={
+            <SectionLayout
+              title={t("nav.subscription")}
+              items={[
+                { key: "/subscription", label: t("sub.nav.overview"), icon: <CrownOutlined /> },
+                { key: "/subscription/change-plan", label: t("sub.nav.changePlan"), icon: <SwapOutlined /> },
+                { key: "/subscription/points", label: t("sub.nav.points"), icon: <ThunderboltOutlined /> },
+                { key: "/subscription/invoices", label: t("sub.nav.invoices"), icon: <FileTextOutlined /> },
+              ]}
+            />
+          }
+        >
+          <Route index element={<SubscriptionPage />} />
+          <Route path="change-plan" element={<ChangePlanPage />} />
+          <Route path="points" element={<PointsPage />} />
+          <Route path="invoices" element={<InvoicesPage />} />
+        </Route>
 
         <Route path="*" element={<NotFound />} />
       </Route>

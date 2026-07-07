@@ -58,6 +58,49 @@ import type {
   WidgetConfig,
   WorkspaceBrief,
 } from "./types";
+import type {
+  AdsReport,
+  AiSummaryReport,
+  Broadcast,
+  BroadcastListItem,
+  BroadcastRun,
+  BroadcastSchedule,
+  BroadcastSendRules,
+  BroadcastType,
+  ChannelsReport,
+  CheckoutDuration,
+  CheckoutResult,
+  CustomerDimension,
+  CustomersReport,
+  EdmCampaign,
+  EdmProvider,
+  Invoice,
+  MsgTemplate,
+  OnlineTimeReport,
+  OrderPreview,
+  Plan,
+  PointsLedgerPage,
+  PointsTopupResult,
+  RecipientPage,
+  RecipientState,
+  ReportExportJob,
+  ReportExportStatus,
+  ReportFilters,
+  ReportShare,
+  Segment,
+  SegmentDefinition,
+  SegmentMode,
+  ServiceOverviewReport,
+  SmsSignature,
+  SplitLink,
+  SplitLinkClickStats,
+  SplitLinkTarget,
+  SplitStrategy,
+  Subscription,
+  SubscriptionAddons,
+  SummaryReport,
+  TemplateChannel,
+} from "./types";
 
 /* ---------------------------------------------------------------- auth */
 
@@ -658,3 +701,236 @@ export const KB_DOC_TYPES: { type: KbDocType; label: string }[] = [
   { type: "url", label: "網址匯入" },
   { type: "text", label: "純文字" },
 ];
+
+/* ============================================================ P3: marketing */
+
+export const segmentsApi = {
+  list: () => http<Segment[]>("GET", "/segments"),
+  get: (id: string) => http<Segment>("GET", `/segments/${id}`),
+  create: (body: { name: string; mode: SegmentMode; definition: SegmentDefinition }) =>
+    http<Segment>("POST", "/segments", { body }),
+  update: (id: string, body: { name?: string; definition?: SegmentDefinition }) =>
+    http<Segment>("PATCH", `/segments/${id}`, { body }),
+  remove: (id: string) => http<void>("DELETE", `/segments/${id}`),
+  /** Live audience-size estimate (backend runs it under a 5s statement timeout). */
+  estimate: (definition: SegmentDefinition) =>
+    http<{ count: number }>("POST", "/segments/estimate", { body: { definition } }),
+};
+
+export interface BroadcastCreateBody {
+  name: string;
+  type: BroadcastType;
+  channel_type: string;
+  channel_account_id: string;
+  segment_id: string;
+  template_id: string;
+  variable_mapping: Record<string, string>;
+  schedule: BroadcastSchedule;
+  send_rules: BroadcastSendRules;
+}
+
+export const broadcastsApi = {
+  list: (params: { type?: BroadcastType; status?: string; q?: string } = {}) =>
+    http<BroadcastListItem[]>("GET", "/broadcasts", { query: params }),
+  get: (id: string) => http<Broadcast>("GET", `/broadcasts/${id}`),
+  create: (body: BroadcastCreateBody) => http<Broadcast>("POST", "/broadcasts", { body }),
+  update: (id: string, body: Partial<BroadcastCreateBody>) =>
+    http<Broadcast>("PATCH", `/broadcasts/${id}`, { body }),
+  pause: (id: string) => http<Broadcast>("POST", `/broadcasts/${id}/pause`),
+  resume: (id: string) => http<Broadcast>("POST", `/broadcasts/${id}/resume`),
+  cancel: (id: string) => http<Broadcast>("POST", `/broadcasts/${id}/cancel`),
+  remove: (id: string) => http<void>("DELETE", `/broadcasts/${id}`),
+  recycleBin: () => http<BroadcastListItem[]>("GET", "/broadcasts/recycle-bin"),
+  restore: (id: string) => http<Broadcast>("POST", `/broadcasts/${id}/restore`),
+  runs: (id: string) => http<BroadcastRun[]>("GET", `/broadcasts/${id}/runs`),
+  recipients: (
+    id: string,
+    runId: string,
+    params: { state?: RecipientState; cursor?: string } = {},
+  ) =>
+    http<RecipientPage>("GET", `/broadcasts/${id}/runs/${runId}/recipients`, { query: params }),
+};
+
+/** Message templates — channel-scoped. Body shape is channel-specific (see the
+ *  contract in api/types.ts). */
+export const msgTemplatesApi = {
+  list: (channel: TemplateChannel) => http<MsgTemplate[]>("GET", `/msg-templates/${channel}`),
+  get: (channel: TemplateChannel, id: string) =>
+    http<MsgTemplate>("GET", `/msg-templates/${channel}/${id}`),
+  create: (channel: TemplateChannel, body: Record<string, unknown>) =>
+    http<MsgTemplate>("POST", `/msg-templates/${channel}`, { body }),
+  update: (channel: TemplateChannel, id: string, body: Record<string, unknown>) =>
+    http<MsgTemplate>("PATCH", `/msg-templates/${channel}/${id}`, { body }),
+  remove: (channel: TemplateChannel, id: string) =>
+    http<void>("DELETE", `/msg-templates/${channel}/${id}`),
+  /** Pull latest Meta approval status for the WhatsApp templates of an account. */
+  syncWhatsapp: (channelAccountId: string) =>
+    http<{ synced: number }>("POST", "/msg-templates/whatsapp/sync", {
+      body: { channel_account_id: channelAccountId },
+    }),
+  /* SMS signatures */
+  signatures: () => http<SmsSignature[]>("GET", "/msg-templates/sms/signatures"),
+  createSignature: (body: { name: string; text: string }) =>
+    http<SmsSignature>("POST", "/msg-templates/sms/signatures", { body }),
+};
+
+export const splitLinksApi = {
+  list: () => http<SplitLink[]>("GET", "/split-links"),
+  get: (id: string) => http<SplitLink>("GET", `/split-links/${id}`),
+  create: (body: {
+    name: string;
+    channel_type: string;
+    strategy: SplitStrategy;
+    targets: SplitLinkTarget[];
+    prefill_text: string;
+  }) => http<SplitLink>("POST", "/split-links", { body }),
+  update: (
+    id: string,
+    body: Partial<{
+      name: string;
+      strategy: SplitStrategy;
+      targets: SplitLinkTarget[];
+      prefill_text: string;
+      status: "active" | "disabled";
+    }>,
+  ) => http<SplitLink>("PATCH", `/split-links/${id}`, { body }),
+  remove: (id: string) => http<void>("DELETE", `/split-links/${id}`),
+  clicks: (id: string, params: { from?: string; to?: string } = {}) =>
+    http<SplitLinkClickStats>("GET", `/split-links/${id}/clicks`, { query: params }),
+};
+
+export const edmApi = {
+  list: () => http<EdmCampaign[]>("GET", "/edm"),
+  create: (body: {
+    name: string;
+    provider: EdmProvider;
+    segment_id: string;
+    template_id: string;
+    schedule: BroadcastSchedule;
+  }) => http<EdmCampaign>("POST", "/edm", { body }),
+};
+
+/** Umbrella namespace mirroring the backend 行銷 module grouping. */
+export const marketingApi = {
+  segments: segmentsApi,
+  broadcasts: broadcastsApi,
+  templates: msgTemplatesApi,
+  splitLinks: splitLinksApi,
+  edm: edmApi,
+};
+
+/* ============================================================== P3: reports */
+
+function reportQuery(f: ReportFilters): Record<string, string | undefined> {
+  return {
+    from: f.from,
+    to: f.to,
+    interval: f.interval,
+    channel_type: f.channel_type ?? undefined,
+    channel_account_id: f.channel_account_id ?? undefined,
+    member_id: f.member_id ?? undefined,
+  };
+}
+
+export const reportsApi = {
+  serviceOverview: (f: ReportFilters = {}) =>
+    http<ServiceOverviewReport>("GET", "/reports/service-overview", { query: reportQuery(f) }),
+  customers: (f: ReportFilters & { dimension?: CustomerDimension } = {}) =>
+    http<CustomersReport>("GET", "/reports/customers", {
+      query: { ...reportQuery(f), dimension: f.dimension },
+    }),
+  onlineTime: (f: ReportFilters = {}) =>
+    http<OnlineTimeReport>("GET", "/reports/online-time", { query: reportQuery(f) }),
+  summary: (f: ReportFilters = {}) =>
+    http<SummaryReport>("GET", "/reports/summary", { query: reportQuery(f) }),
+  channels: (f: ReportFilters = {}) =>
+    http<ChannelsReport>("GET", "/reports/channels", { query: reportQuery(f) }),
+  adsFacebook: (f: ReportFilters = {}) =>
+    http<AdsReport>("GET", "/reports/ads/facebook", { query: reportQuery(f) }),
+  adsMessenger: (f: ReportFilters = {}) =>
+    http<AdsReport>("GET", "/reports/ads/messenger", { query: reportQuery(f) }),
+  aiSummary: (f: ReportFilters = {}) =>
+    http<AiSummaryReport>("GET", "/reports/ai-summary", { query: reportQuery(f) }),
+
+  /** Async CSV export → poll for the signed MinIO URL. */
+  export: (report: string, f: ReportFilters & { dimension?: CustomerDimension } = {}) =>
+    http<ReportExportJob>("POST", `/reports/${report}/export`, {
+      body: { ...reportQuery(f), dimension: f.dimension },
+    }),
+  exportStatus: (jobId: string) =>
+    http<ReportExportStatus>("GET", `/reports/exports/${jobId}`),
+  share: (report: string, config: Record<string, unknown>) =>
+    http<ReportShare>("POST", `/reports/${report}/share`, { body: { config } }),
+};
+
+/* ============================================================== P3: billing */
+
+export interface CheckoutBody {
+  plan_code: string;
+  duration_days: CheckoutDuration;
+  addons: Partial<SubscriptionAddons>;
+  use_balance?: boolean;
+}
+
+export const billingApi = {
+  plans: () => http<Plan[]>("GET", "/billing/plans"),
+  subscription: () => http<Subscription>("GET", "/billing/subscription"),
+  checkout: (body: CheckoutBody) => http<CheckoutResult>("POST", "/billing/checkout", { body }),
+  topupPoints: (points: number) =>
+    http<PointsTopupResult>("POST", "/billing/points/topup", { body: { points } }),
+  pointsLedger: (cursor?: string) =>
+    http<PointsLedgerPage>("GET", "/billing/points/ledger", { query: { cursor } }),
+  invoices: () => http<Invoice[]>("GET", "/billing/invoices"),
+  /** super_admin-only no-charge plan switch (the self-use path). */
+  adminChangePlan: (body: {
+    plan_code: string;
+    duration_days: CheckoutDuration;
+    addons: Partial<SubscriptionAddons>;
+  }) => http<Subscription>("POST", "/billing/admin/change-plan", { body }),
+};
+
+/** Client-side order estimate for the live 訂單預覽 while the user adjusts the
+ *  plan/duration/addons. The definitive numbers come back from
+ *  billingApi.checkout — this only powers the responsive preview.
+ *  Duration discounts: 30d 0 / 90d .10 / 180d .15 / 360d .20 / 720d .25.
+ *  7d = 試用 (nominal trial fee, no long-term discount). */
+export const DURATION_DISCOUNT: Record<CheckoutDuration, number> = {
+  7: 0,
+  30: 0,
+  90: 0.1,
+  180: 0.15,
+  360: 0.2,
+  720: 0.25,
+};
+
+/** 7-day trial is billed as a nominal fraction of the monthly price (matches
+ *  the captured Max 7-day 原價 $19.90 ≈ 10% of $199). */
+export const TRIAL_FRACTION = 0.1;
+export const HANDLING_FEE_RATE = 0.07;
+
+export function estimateOrder(params: {
+  plan_monthly: number;
+  duration_days: CheckoutDuration;
+  addon_monthly_total: number;
+  balance: number;
+  use_balance: boolean;
+  currency?: string;
+}): OrderPreview {
+  const { plan_monthly, duration_days, addon_monthly_total, balance, use_balance } = params;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const months = duration_days === 7 ? TRIAL_FRACTION : duration_days / 30;
+  const base_price = round2((plan_monthly + addon_monthly_total) * months);
+  const discount = round2(base_price * DURATION_DISCOUNT[duration_days]);
+  const handling_fee = round2((base_price - discount) * HANDLING_FEE_RATE);
+  const net = base_price - discount + handling_fee;
+  const balance_applied = use_balance ? round2(Math.min(Math.max(balance, 0), net)) : 0;
+  const amount_due = round2(Math.max(net - balance_applied, 0));
+  return {
+    base_price,
+    discount,
+    handling_fee,
+    balance_applied,
+    amount_due,
+    currency: params.currency ?? "USD",
+  };
+}

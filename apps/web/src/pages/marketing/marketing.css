@@ -1,0 +1,195 @@
+/* P3 marketing styles — shared across broadcasts / templates / split-links / EDM.
+   All colors reference the CSS variables injected from theme/tokens.ts. */
+
+.sc-mkt-hint {
+  font-size: 11.5px;
+  color: var(--sc-text-tertiary);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.sc-pro-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin: 12px 20px 0;
+  border: 1px solid var(--sc-warning-bg);
+  background: var(--sc-warning-bg);
+  color: var(--sc-warning);
+  border-radius: var(--sc-radius);
+  font-size: 13px;
+}
+
+/* KPI stat cards (reused by reports too via reports.css) */
+.sc-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sc-kpi-card {
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: var(--sc-bg-container);
+  padding: 14px 16px;
+}
+
+.sc-kpi-label {
+  font-size: 12.5px;
+  color: var(--sc-text-tertiary);
+}
+
+.sc-kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--sc-text-heading);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+  line-height: 1.2;
+}
+
+.sc-kpi-sub {
+  font-size: 12px;
+  color: var(--sc-text-secondary);
+  margin-top: 2px;
+}
+
+/* channel picker grid (broadcast wizard step 1) */
+.sc-chan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.sc-chan-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  padding: 12px 14px;
+  background: var(--sc-bg-container);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--sc-font);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.sc-chan-tile:hover:not(:disabled) {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary-bg);
+}
+
+.sc-chan-tile.sc-active {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary-bg);
+  box-shadow: inset 0 0 0 1px var(--sc-primary);
+}
+
+.sc-chan-tile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sc-chan-tile-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--sc-text-heading);
+}
+
+.sc-chan-tile-sub {
+  font-size: 11.5px;
+  color: var(--sc-text-tertiary);
+}
+
+/* WhatsApp template phone preview */
+.sc-wa-preview {
+  width: 300px;
+  flex: none;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, #e5ddd5 0%, #ded4ca 100%);
+  padding: 16px 12px;
+  min-height: 420px;
+  border: 8px solid #111827;
+  box-shadow: var(--sc-shadow-lg);
+}
+
+.sc-wa-bubble {
+  background: #fff;
+  border-radius: 8px;
+  border-top-left-radius: 2px;
+  padding: 8px 10px 6px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.12);
+  max-width: 100%;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #111b21;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sc-wa-header {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.sc-wa-footer {
+  color: #667781;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.sc-wa-btns {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sc-wa-btn {
+  background: #fff;
+  color: #0a7cff;
+  text-align: center;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.12);
+}
+
+/* QR code box */
+.sc-qr-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.sc-qr-box img {
+  width: 200px;
+  height: 200px;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: #fff;
+  padding: 8px;
+}
+
+/* predicate builder rows */
+.sc-seg-group {
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  padding: 12px;
+  background: var(--sc-bg-subtle);
+}
+
+.sc-seg-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}

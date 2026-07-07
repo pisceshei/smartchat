@@ -16,6 +16,13 @@ from .ai import (
     TranslationUsage,
 )
 from .base import uuid7
+from .billing import (
+    BalanceLedger,
+    BillingOrder,
+    Invoice,
+    StripeEvent,
+    WorkspaceBalance,
+)
 from .channels import CHANNEL_TYPES, ChannelAccount, DeviceBridge, Widget
 from .contacts import (
     ChannelIdentity,
@@ -45,6 +52,20 @@ from .flows import (
     FlowVersion,
     KeywordDict,
     KeywordDictItem,
+)
+from .marketing import (
+    PARTITIONED_TABLES as MARKETING_PARTITIONED_TABLES,
+)
+from .marketing import (
+    Broadcast,
+    BroadcastRecipient,
+    BroadcastRun,
+    EdmCampaign,
+    MsgTemplate,
+    Segment,
+    SmsSignature,
+    SplitLink,
+    SplitLinkClick,
 )
 from .members import (
     MemberDailyStats,
@@ -78,6 +99,19 @@ from .misc import (
     Timer,
     WebhookDelivery,
     WebhookSubscription,
+)
+from .reports import (
+    AgentPresenceSession,
+    AggAdsDaily,
+    AggAgentHourly,
+    AggConversationsHourly,
+    AggCustomersDaily,
+    AggMessagesHourly,
+    ConversationAttribution,
+    ReportAiSummary,
+    ReportExport,
+    ReportShare,
+    RollupWatermark,
 )
 from .tenancy import (
     AIPointsLedger,
@@ -172,4 +206,33 @@ __all__ = [
     "KBCollection",
     "KBDocument",
     "KBChunk",
+    # marketing (P3)
+    "MARKETING_PARTITIONED_TABLES",
+    "Segment",
+    "Broadcast",
+    "BroadcastRun",
+    "BroadcastRecipient",
+    "MsgTemplate",
+    "SmsSignature",
+    "SplitLink",
+    "SplitLinkClick",
+    "EdmCampaign",
+    # reports (P3)
+    "AggMessagesHourly",
+    "AggConversationsHourly",
+    "AggAgentHourly",
+    "AggCustomersDaily",
+    "AggAdsDaily",
+    "AgentPresenceSession",
+    "ConversationAttribution",
+    "ReportShare",
+    "ReportExport",
+    "ReportAiSummary",
+    "RollupWatermark",
+    # billing (P3)
+    "WorkspaceBalance",
+    "BalanceLedger",
+    "BillingOrder",
+    "StripeEvent",
+    "Invoice",
 ]

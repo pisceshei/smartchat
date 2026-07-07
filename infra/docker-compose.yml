@@ -69,7 +69,22 @@ services:
     command: uvicorn apps.edge.main:app --host 0.0.0.0 --port 8002
     ports: ["127.0.0.1:8002:8002"]
 
+  # bge-m3 embedding sidecar (P3 RAG embed tier). CPU-only; serves POST /embed
+  # on :8090. Point the API/worker at it with EMBED_BASE_URL=http://embed:8090
+  # (compose network); .env's localhost:8090 is for host-run dev only.
+  embed:
+    build:
+      context: ..
+      dockerfile: infra/embed.Dockerfile
+    environment:
+      EMBED_MODEL: BAAI/bge-m3
+      EMBED_DEVICE: cpu
+    volumes: [embed-models:/models]
+    restart: unless-stopped
+    ports: ["127.0.0.1:8090:8090"]
+
 volumes:
   pg-data:
   redis-data:
   minio-data:
+  embed-models:
