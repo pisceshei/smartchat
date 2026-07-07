@@ -1,0 +1,75 @@
+# SmartChat dev stack. Prod overrides in compose.prod.yml.
+name: smartchat
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: infra/backend.Dockerfile
+  env_file: [../.env]
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_started }
+    minio: { condition: service_started }
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: smartchat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartchat}
+      POSTGRES_DB: smartchat
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartchat"]
+      interval: 5s
+      retries: 10
+    ports: ["127.0.0.1:5433:5432"]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --notify-keyspace-events Ex
+    volumes: [redis-data:/data]
+    ports: ["127.0.0.1:6380:6379"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smartchat}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smartchat-secret}
+    volumes: [minio-data:/data]
+    ports: ["127.0.0.1:9002:9000", "127.0.0.1:9003:9001"]
+
+  api:
+    <<: *backend
+    command: uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000
+    ports: ["127.0.0.1:8000:8000"]
+
+  ws-gateway:
+    <<: *backend
+    command: uvicorn apps.api.app.realtime.gateway:app --host 0.0.0.0 --port 8001
+    ports: ["127.0.0.1:8001:8001"]
+
+  worker:
+    <<: *backend
+    command: arq apps.api.app.jobs.worker.WorkerSettings
+
+  beat:
+    <<: *backend
+    command: python -m apps.api.app.jobs.beat
+
+  flow-engine:
+    <<: *backend
+    command: python -m apps.flow_engine.runtime
+
+  edge:
+    <<: *backend
+    command: uvicorn apps.edge.main:app --host 0.0.0.0 --port 8002
+    ports: ["127.0.0.1:8002:8002"]
+
+volumes:
+  pg-data:
+  redis-data:
+  minio-data:
