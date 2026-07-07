@@ -49,7 +49,38 @@ def create_app() -> FastAPI:
     async def healthz() -> dict:
         return {"ok": True}
 
+    _mount_widget_assets(app)
     return app
+
+
+def _mount_widget_assets(app: FastAPI) -> None:
+    """Serve the embeddable loader at /js/project_{key}.js and the iframe chat
+    app under /widget-app/. The loader parses its widget key from its own URL,
+    so one static artifact serves every widget (Cloudflare-cacheable). In
+    production nginx can shadow these paths; this keeps a single-container
+    deployment fully functional."""
+    from pathlib import Path
+
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    dist = Path(__file__).resolve().parents[2] / "widget" / "dist"
+
+    @app.get("/js/project_{widget_key}.js", include_in_schema=False)
+    async def widget_loader(widget_key: str):  # noqa: ANN202
+        loader = dist / "loader.js"
+        if not loader.is_file() or not widget_key.isalnum():
+            raise HTTPException(404)
+        return FileResponse(
+            loader,
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"},
+        )
+
+    chat_dir = dist / "chat"
+    if chat_dir.is_dir():
+        app.mount("/widget-app", StaticFiles(directory=str(chat_dir), html=True), name="widget-app")
 
 
 app = create_app()
