@@ -9,23 +9,31 @@ The poller stores attachments/HTML bodies in MinIO itself, then feeds
 pre-normalized events straight into the ingress pipeline (email has no
 webhook).
 
-Credentials dict: {email, imap_host, imap_port, imap_ssl, imap_user,
-imap_password, smtp_host, smtp_port, smtp_tls, smtp_user, smtp_password,
-from_name?}.
+Credentials dict (password auth): {email, imap_host, imap_port, imap_ssl,
+imap_user, imap_password, smtp_host, smtp_port, smtp_tls, smtp_user,
+smtp_password, from_name?}.
+
+Credentials dict (OAuth2 — Gmail/Outlook, which have retired Basic Auth):
+{auth_type:"oauth2", oauth_user, oauth_access_token, imap_host, imap_port,
+imap_ssl, smtp_host, smtp_port, smtp_tls, + refresh fields oauth_refresh_token,
+oauth_token_endpoint, oauth_client_id, oauth_client_secret}. Both IMAP and SMTP
+then authenticate with SASL XOAUTH2 instead of a password LOGIN.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import format_datetime, make_msgid, parseaddr
 from typing import Any, ClassVar
 
+import httpx
 from py_contracts.content import (
     ContentBlock,
     EmailBlock,
@@ -49,6 +57,36 @@ log = logging.getLogger("smartchat.channels.email")
 
 _PLUS_RE = re.compile(r"^([^+@]+)\+c_([A-Za-z0-9\-]+)@(.+)$")
 _MSGID_RE = re.compile(r"<([^>]+)>")
+
+
+# --------------------------------------------------------------------------
+# SASL XOAUTH2 (Gmail / Outlook OAuth2 — Basic Auth is retired on both)
+# --------------------------------------------------------------------------
+def uses_oauth2(credentials: dict[str, Any]) -> bool:
+    """OAuth2 path is selected only when explicitly flagged AND a bearer token
+    is present; otherwise fall back to password LOGIN."""
+    return credentials.get("auth_type") == "oauth2" and bool(
+        credentials.get("oauth_access_token")
+    )
+
+
+def build_xoauth2(user: str, token: str) -> str:
+    """SASL XOAUTH2 initial client response, base64-encoded, per
+    https://developers.google.com/gmail/imap/xoauth2-protocol :
+    base64("user=" + user + ^A + "auth=Bearer " + token + ^A^A) where ^A = 0x01.
+    (aioimaplib.IMAP4.xoauth2 / aiosmtplib auth_xoauth2 build the identical
+    string internally; this mirrors it for logging + unit tests.)"""
+    raw = f"user={user}\x01auth=Bearer {token}\x01\x01".encode()
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _oauth_user(credentials: dict[str, Any], fallback: str = "") -> str:
+    return (
+        credentials.get("oauth_user")
+        or credentials.get("imap_user")
+        or credentials.get("email")
+        or fallback
+    )
 
 
 # --------------------------------------------------------------------------
@@ -353,8 +391,7 @@ class EmailAdapter(BaseAdapter):
                     await smtp.starttls()
                 except aiosmtplib.SMTPException:
                     pass  # server may not support STARTTLS
-            if username and password:
-                await smtp.login(username, password)
+            await _authenticate_smtp(smtp, credentials, username, password)
             await smtp.send_message(msg)
             try:
                 await smtp.quit()
@@ -381,27 +418,95 @@ class EmailAdapter(BaseAdapter):
             return HealthResult(ok=False, status="error", detail={"imap": str(e)[:300]})
         return HealthResult(ok=True, status="active", detail=detail)
 
+    async def refresh_credentials(
+        self, account: Any, credentials: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """OAuth2 refresh-token grant (Gmail/Outlook). Exchanges
+        oauth_refresh_token at oauth_token_endpoint for a fresh
+        oauth_access_token; the sender persists the returned dict via
+        creds.set_credentials before the current token expires. Returns None for
+        non-OAuth2 accounts or when required refresh fields are missing (the
+        caller then leaves the stored credentials untouched)."""
+        if credentials.get("auth_type") != "oauth2":
+            return None
+        endpoint = credentials.get("oauth_token_endpoint")
+        refresh_token = credentials.get("oauth_refresh_token")
+        client_id = credentials.get("oauth_client_id")
+        if not (endpoint and refresh_token and client_id):
+            return None
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }
+        secret = credentials.get("oauth_client_secret")
+        if secret:
+            data["client_secret"] = secret
+        try:
+            r = await self.http.post(endpoint, data=data)
+            r.raise_for_status()
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("email oauth2 refresh failed: %s", str(e)[:200])
+            return None
+        access = body.get("access_token")
+        if not access:
+            return None
+        updated = {**credentials, "oauth_access_token": access}
+        if body.get("refresh_token"):  # some providers rotate the refresh token
+            updated["oauth_refresh_token"] = body["refresh_token"]
+        if body.get("expires_in"):
+            updated["oauth_token_expires_at"] = (
+                datetime.now(UTC) + timedelta(seconds=int(body["expires_in"]))
+            ).isoformat()
+        return updated
+
 
 # --------------------------------------------------------------------------
 # IMAP polling (worker tasks live in ..sender/..ingress registration module)
 # --------------------------------------------------------------------------
+async def _authenticate_imap(client: Any, credentials: dict[str, Any]) -> None:
+    """Run the selected auth path on an already-connected IMAP client. Factored
+    out of _open_imap so the password/XOAUTH2 selection is unit-testable with a
+    fake client (no network)."""
+    if uses_oauth2(credentials):
+        resp = await client.xoauth2(
+            _oauth_user(credentials), credentials.get("oauth_access_token") or ""
+        )
+    else:
+        user = credentials.get("imap_user") or credentials.get("email") or ""
+        resp = await client.login(user, credentials.get("imap_password") or "")
+    if getattr(resp, "result", "OK") != "OK":
+        raise PermissionError(f"IMAP auth failed: {getattr(resp, 'lines', resp)}")
+
+
+async def _authenticate_smtp(
+    smtp: Any, credentials: dict[str, Any], username: str, password: str
+) -> None:
+    """SMTP auth-path selection: SASL XOAUTH2 for OAuth2 accounts, otherwise
+    password LOGIN when a user + password are present (unauthenticated relays
+    skip auth entirely)."""
+    if uses_oauth2(credentials):
+        await smtp.auth_xoauth2(
+            _oauth_user(credentials, username), credentials.get("oauth_access_token") or ""
+        )
+    elif username and password:
+        await smtp.login(username, password)
+
+
 async def _open_imap(credentials: dict[str, Any]) -> Any:
     import aioimaplib
 
     host = credentials.get("imap_host", "")
     port = int(credentials.get("imap_port") or 993)
     ssl = bool(credentials.get("imap_ssl", True))
-    user = credentials.get("imap_user") or credentials.get("email") or ""
-    password = credentials.get("imap_password") or ""
     client = (
         aioimaplib.IMAP4_SSL(host=host, port=port, timeout=30)
         if ssl
         else aioimaplib.IMAP4(host=host, port=port, timeout=30)
     )
     await client.wait_hello_from_server()
-    resp = await client.login(user, password)
-    if resp.result != "OK":
-        raise PermissionError(f"IMAP login failed: {resp.lines}")
+    await _authenticate_imap(client, credentials)
     return client
 
 

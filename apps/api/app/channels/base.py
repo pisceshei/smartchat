@@ -13,7 +13,7 @@ import base64
 import hashlib
 import hmac
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, ClassVar, Literal, Protocol, runtime_checkable
 
@@ -180,6 +180,15 @@ CAPABILITIES: dict[str, Capabilities] = {
         typing_indicator=True, read_receipts=True,
         max_text_len=4096, media_types=set(_ALL_MEDIA), location=True,
     ),
+    # WhatsApp via a BSP proxy (YCloud/ChatApp/…) — same WhatsApp semantics as
+    # the direct Cloud API, so capabilities (24h window, templates) must match;
+    # sender.py/ingress read capabilities_for(channel_type) directly.
+    "whatsapp_bsp": Capabilities(
+        read_receipts=True,
+        buttons=True, max_buttons=10, button_text_max=20,
+        templates=True, template_required_outside_window=True, session_window_hours=24,
+        max_text_len=4096, media_types=set(_ALL_MEDIA), location=True,
+    ),
     "messenger": Capabilities(
         typing_indicator=True, read_receipts=True,
         buttons=True, max_buttons=13, button_text_max=20,
@@ -209,6 +218,49 @@ CAPABILITIES: dict[str, Capabilities] = {
     ),
     "line_app": Capabilities(
         max_text_len=5000, media_types={"image", "video", "audio", "file"}, location=True,
+    ),
+    # -- Phase 4 channels (docs/channel-integration.md §8–14) ----------------
+    # Slack: Block Kit interactive buttons; no customer-service time window.
+    # section text field caps at 3000 chars; button text at 75.
+    "slack": Capabilities(
+        buttons=True, max_buttons=5, button_text_max=75,
+        product_cards=True, max_text_len=3000,
+        media_types={"image", "video", "audio", "file"},
+    ),
+    # VKontakte community: inline/bot keyboards (label ≤40, ≤10 buttons here);
+    # messages.setActivity gives a typing indicator. Text ≤4096.
+    "vk": Capabilities(
+        typing_indicator=True,
+        buttons=True, max_buttons=10, button_text_max=40,
+        max_text_len=4096, media_types={"image", "video", "audio", "file"},
+    ),
+    # WeChat 微信客服 (Customer Service): text/image/voice/video/file + msgmenu
+    # (menu → buttons); 48h active-messaging session window. Text ≤2048 bytes.
+    "wechat_kf": Capabilities(
+        buttons=True, max_buttons=10, button_text_max=30,
+        session_window_hours=48,
+        max_text_len=2048, media_types={"image", "voice", "video", "file"},
+    ),
+    # WeCom 企業微信: text + rich (news/textcard → product card); no interactive
+    # reply buttons in external messaging. Text ≤2048.
+    "wecom": Capabilities(
+        product_cards=True,
+        max_text_len=2048, media_types={"image", "voice", "video", "file"},
+    ),
+    # TikTok Business Messaging: text only, business-account gated (limited API).
+    "tiktok_business": Capabilities(
+        max_text_len=2000,
+    ),
+    # YouTube comments (Data API): text-only replies, no typing/receipts.
+    # comment body caps at 10k chars.
+    "youtube": Capabilities(
+        max_text_len=10_000,
+    ),
+    # Zalo OA: text + template (list/media templates → product card + buttons).
+    "zalo_app": Capabilities(
+        buttons=True, max_buttons=5, button_text_max=40,
+        product_cards=True, templates=True,
+        max_text_len=2000, media_types={"image", "file"},
     ),
 }
 
@@ -301,6 +353,23 @@ class HealthResult(BaseModel):
     ok: bool
     status: str = "active"  # suggested channel_accounts.status
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+@dataclass
+class ConnectResult:
+    """Adapter connect-time validation outcome (Phase 4 connect dispatch).
+
+    The channels router persists external_id/name/health, merges config_patch
+    into the account config, and — when needs_webhook_secret is set — echoes the
+    generated webhook_secret + hook URL in the connect response so the operator
+    can paste it into the provider console (VK/WeChat/Zalo/TikTok use a
+    per-account path secret; Slack/YouTube do not)."""
+
+    external_id: str
+    name: str = ""
+    health: HealthResult = field(default_factory=lambda: HealthResult(ok=True))
+    config_patch: dict[str, Any] = field(default_factory=dict)
+    needs_webhook_secret: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -514,6 +583,10 @@ class ChannelAdapter(Protocol):
         self, account: AccountRef, credentials: dict[str, Any]
     ) -> dict[str, Any] | None: ...
 
+    async def connect_validate(
+        self, config: dict[str, Any], credentials: dict[str, Any]
+    ) -> ConnectResult: ...
+
     async def enrich_outbound(
         self,
         session: Any,
@@ -601,6 +674,29 @@ class BaseAdapter:
     ) -> dict[str, Any] | None:
         return None
 
+    async def connect_validate(
+        self, config: dict[str, Any], credentials: dict[str, Any]
+    ) -> ConnectResult:
+        """Connect-time validation + account-identity resolution.
+
+        The default accepts the connection, taking external_id from an explicit
+        config hint (or a generated uuid) and requesting a per-account webhook
+        secret. Real Phase-4 adapters override this to authenticate the
+        credentials, discover the provider account id, register the webhook and
+        set health accordingly."""
+        external_id = str(
+            config.get("external_id")
+            or config.get("app_id")
+            or config.get("account_id")
+            or uuid.uuid4()
+        )
+        return ConnectResult(
+            external_id=external_id,
+            name=str(config.get("name") or ""),
+            health=HealthResult(ok=True, status="active"),
+            needs_webhook_secret=True,
+        )
+
     async def enrich_outbound(
         self,
         session: Any,
@@ -627,6 +723,7 @@ __all__ = [
     "CAPABILITIES",
     "Capabilities",
     "ChannelAdapter",
+    "ConnectResult",
     "ContactUpdate",
     "DeliveryStatus",
     "ErrorCode",

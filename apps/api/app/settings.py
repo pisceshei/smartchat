@@ -30,6 +30,28 @@ class Settings(BaseSettings):
     meta_app_secret: str = ""
     meta_verify_token: str = ""
 
+    # --- Phase 4 channel platform-app credentials (empty ⇒ channel disabled) ---
+    # Slack: Events API request signing (v0=hmac_sha256(signing_secret, body)).
+    slack_signing_secret: str = ""
+    # Google OAuth2 (Gmail XOAUTH2 email + YouTube Data API). google_* is the
+    # generic Google app; youtube_* may override for a dedicated YouTube app.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    youtube_oauth_client_id: str = ""
+    youtube_oauth_client_secret: str = ""
+    # Microsoft identity platform OAuth2 (Outlook/Office365 XOAUTH2 email).
+    ms_oauth_client_id: str = ""
+    ms_oauth_client_secret: str = ""
+    # Zalo OA (OAuth v4 access/refresh token).
+    zalo_app_id: str = ""
+    zalo_app_secret: str = ""
+    # VKontakte Callback API default confirmation string (per-community may set
+    # its own in channel config; this is the platform-wide fallback).
+    vk_confirmation_default: str = ""
+    # TikTok Business Messaging.
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
+
     # --- embeddings (P3): self-hosted bge-m3 sidecar (1024-dim, OpenAI-less) ---
     # sub2api relay has no embeddings endpoint; when set, services/embeddings
     # delegates to this HTTP server (POST {embed_base_url}/embed) for RAG.

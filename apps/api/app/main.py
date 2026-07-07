@@ -23,6 +23,14 @@ MODULE_ROUTERS = [
     "apps.api.app.modules.channels.router",
     "apps.api.app.modules.widget.router",
     "apps.api.app.modules.hooks.router",
+    # Phase 4 per-channel webhook stubs (adapter agents fill the bodies).
+    # YouTube has NO webhook route — it is polled via the Data API (see the
+    # email-style poller pattern), so it is intentionally absent here.
+    "apps.api.app.modules.hooks.slack",
+    "apps.api.app.modules.hooks.vk",
+    "apps.api.app.modules.hooks.wechat",
+    "apps.api.app.modules.hooks.zalo",
+    "apps.api.app.modules.hooks.tiktok",
     "apps.api.app.modules.settings_mod.router",
     "apps.api.app.modules.openapi_public.router",
     "apps.api.app.modules.ai.router",

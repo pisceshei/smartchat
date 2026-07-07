@@ -30,6 +30,7 @@ CHANNEL_TYPES = (
     "instagram",
     "whatsapp_cloud",
     "whatsapp_app",
+    "whatsapp_bsp",
     "line_oa",
     "line_app",
     "wechat",

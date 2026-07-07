@@ -318,6 +318,13 @@ export const zhHant = {
   "int.channel.desc.whatsapp_app": "WhatsApp 個人號雲端托管（Beta）",
   "int.channel.desc.line_oa": "LINE 官方帳號 Messaging API",
   "int.channel.desc.line_app": "LINE 個人號雲端托管（Beta）",
+  "int.channel.desc.slack": "Slack 工作區機器人，經 Events API 收發訊息",
+  "int.channel.desc.vk": "VKontakte 社群訊息，經 Callback API 接入",
+  "int.channel.desc.wechat_kf": "微信客服帳號，AES 加密回調接入",
+  "int.channel.desc.wecom": "企業微信自建應用訊息收發",
+  "int.channel.desc.zalo_app": "Zalo Official Account，OAuth v4 接入",
+  "int.channel.desc.youtube": "YouTube 頻道評論管理（Data API v3）",
+  "int.channel.desc.tiktok_business": "TikTok 商業號私訊（Messaging API）",
   "int.channel.desc.generic": "此渠道將在後續版本開放",
   "int.tg.token": "Bot Token",
   "int.tg.hint": "向 @BotFather 傳送 /newbot 建立機器人後，將取得的 Token 貼上",
@@ -341,6 +348,78 @@ export const zhHant = {
   "int.wa.wabaId": "WABA ID",
   "int.wa.token": "永久 Access Token",
   "int.name": "帳號名稱",
+  "int.howto": "如何取得？",
+  "int.oauthPlaceholder": "正式環境將跳轉官方 OAuth 授權頁；目前請填入開發者憑證以完成連接。",
+
+  /* whatsapp — BSP 服務商 */
+  "int.wa.bsp": "接入方式",
+  "int.wa.bsp.cloud": "直連 Cloud API",
+  "int.wa.bspHint": "透過 BSP 服務商拉號碼時，填入服務商 API Key 與號碼 ID（無需自建 Meta App）。",
+  "int.wa.apiKey": "服務商 API Key",
+
+  /* instagram — 接入方式 */
+  "int.ig.loginType": "接入方式",
+  "int.ig.login.page": "經 Facebook 粉專",
+  "int.ig.login.ig": "IG 直連登入",
+  "int.ig.hint": "IG 直連登入使用 graph.instagram.com 與 IG User Token（IGSID），適用未連結粉專的專業帳號。",
+  "int.ig.igUserId": "IG 商業帳號 ID",
+  "int.ig.accessToken": "IG User Access Token",
+
+  /* email — 驗證方式 */
+  "int.email.authType": "驗證方式",
+  "int.email.auth.password": "密碼／授權碼",
+  "int.email.auth.oauth2": "OAuth2",
+  "int.email.oauthProvider": "郵箱服務商",
+  "int.email.oauthHint": "Gmail／Outlook 已停用基本認證，需以 OAuth2（XOAUTH2）授權。填入授權後取得的權杖。",
+  "int.email.oauthAccessToken": "OAuth Access Token",
+  "int.email.oauthRefreshToken": "OAuth Refresh Token",
+
+  /* slack */
+  "int.slack.hint": "於 api.slack.com/apps 建立 App，啟用 Events API 與 Bot Token Scopes（chat:write、im:history…），安裝到工作區後取得憑證。",
+  "int.slack.botToken": "Bot User OAuth Token",
+  "int.slack.signingSecret": "Signing Secret",
+
+  /* vk */
+  "int.vk.hint": "於社群「管理 → API 使用 → Callback API」設定回調，填入社群存取權杖、群組 ID、確認字串與密鑰。",
+  "int.vk.token": "社群存取權杖",
+  "int.vk.groupId": "群組 ID",
+  "int.vk.confirmation": "確認字串",
+  "int.vk.secret": "密鑰",
+
+  /* wechat 客服 */
+  "int.wxkf.hint": "微信客服後台「開發配置」取得企業 ID、Secret、回調 Token 與 EncodingAESKey。",
+  "int.wxkf.corpId": "企業 ID（CorpID）",
+  "int.wxkf.secret": "Secret",
+  "int.wxkf.token": "回調 Token",
+  "int.wxkf.aesKey": "EncodingAESKey",
+
+  /* wecom 企業微信 */
+  "int.wecom.hint": "企業微信「應用管理」建立自建應用，取得企業 ID、AgentId、Secret，並於接收訊息設定 Token 與 EncodingAESKey。",
+  "int.wecom.corpId": "企業 ID（CorpID）",
+  "int.wecom.agentId": "AgentId",
+  "int.wecom.secret": "應用 Secret",
+  "int.wecom.token": "接收訊息 Token",
+  "int.wecom.aesKey": "EncodingAESKey",
+
+  /* zalo */
+  "int.zalo.hint": "developers.zalo.me 建立 Official Account 應用，完成 OAuth v4 授權後取得 access／refresh token。",
+  "int.zalo.oaId": "OA ID",
+  "int.zalo.appId": "App ID",
+  "int.zalo.appSecret": "App Secret",
+  "int.zalo.accessToken": "Access Token",
+  "int.zalo.refreshToken": "Refresh Token",
+
+  /* youtube */
+  "int.youtube.hint": "需 Google Cloud 專案啟用 YouTube Data API v3 並完成 OAuth 授權。填入頻道 ID 與授權後取得的權杖。",
+  "int.youtube.goOauth": "前往 Google 授權",
+  "int.youtube.channelId": "頻道 ID（Channel ID）",
+  "int.youtube.accessToken": "Access Token",
+  "int.youtube.refreshToken": "Refresh Token",
+
+  /* tiktok 商業號 */
+  "int.tiktok.hint": "TikTok for Business 開發者平台取得商業號 Access Token 與 Business ID（需商業號資質與 Messaging API 權限）。",
+  "int.tiktok.accessToken": "Access Token",
+  "int.tiktok.businessId": "Business ID",
 
   /* widgets */
   "widget.title": "聊天外掛",

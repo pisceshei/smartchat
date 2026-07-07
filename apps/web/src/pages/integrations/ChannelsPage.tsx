@@ -14,9 +14,16 @@ import {
   EmailConnectModal,
   LineConnectModal,
   MetaConnectModal,
+  SlackConnectModal,
   TelegramConnectModal,
+  TikTokBusinessConnectModal,
+  VkConnectModal,
+  WeChatKfConnectModal,
+  WeComConnectModal,
   WhatsAppApiConnectModal,
   WidgetCreateModal,
+  YouTubeConnectModal,
+  ZaloConnectModal,
 } from "./ConnectModals";
 
 const STATUS_META: Record<ChannelAccountStatus, { color: string; label: string }> = {
@@ -190,6 +197,16 @@ export function ChannelsPage() {
       <EmailConnectModal open={connectType === "email"} onClose={() => setConnectType(null)} />
       <WhatsAppApiConnectModal
         open={connectType === "whatsapp_api" || connectType === "whatsapp_app"}
+        onClose={() => setConnectType(null)}
+      />
+      <SlackConnectModal open={connectType === "slack"} onClose={() => setConnectType(null)} />
+      <VkConnectModal open={connectType === "vk"} onClose={() => setConnectType(null)} />
+      <WeChatKfConnectModal open={connectType === "wechat_kf"} onClose={() => setConnectType(null)} />
+      <WeComConnectModal open={connectType === "wecom"} onClose={() => setConnectType(null)} />
+      <ZaloConnectModal open={connectType === "zalo_app"} onClose={() => setConnectType(null)} />
+      <YouTubeConnectModal open={connectType === "youtube"} onClose={() => setConnectType(null)} />
+      <TikTokBusinessConnectModal
+        open={connectType === "tiktok_business"}
         onClose={() => setConnectType(null)}
       />
       <WidgetCreateModal open={connectType === "widget"} onClose={() => setConnectType(null)} />

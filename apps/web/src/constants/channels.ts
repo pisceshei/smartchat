@@ -24,15 +24,15 @@ export const CHANNEL_CATALOG: ChannelMeta[] = [
   { type: "email", name: "Email", descKey: "int.channel.desc.email", connectable: true },
   { type: "line_oa", name: "LINE 官方帳號", descKey: "int.channel.desc.line_oa", connectable: true, glyph: "LN" },
   { type: "line_app", name: "LINE App", descKey: "int.channel.desc.line_app", connectable: true, beta: true, glyph: "LN" },
-  { type: "youtube", name: "YouTube 評論", descKey: "int.channel.desc.generic", connectable: false },
+  { type: "youtube", name: "YouTube 評論", descKey: "int.channel.desc.youtube", connectable: true },
   { type: "tiktok_app", name: "TikTok App", descKey: "int.channel.desc.generic", connectable: false, glyph: "TT" },
-  { type: "tiktok_business", name: "TikTok 商業號", descKey: "int.channel.desc.generic", connectable: false, glyph: "TT" },
-  { type: "wechat_kf", name: "微信客服", descKey: "int.channel.desc.generic", connectable: false },
-  { type: "wecom", name: "企業微信", descKey: "int.channel.desc.generic", connectable: false },
+  { type: "tiktok_business", name: "TikTok 商業號", descKey: "int.channel.desc.tiktok_business", connectable: true, glyph: "TT" },
+  { type: "wechat_kf", name: "微信客服", descKey: "int.channel.desc.wechat_kf", connectable: true },
+  { type: "wecom", name: "企業微信", descKey: "int.channel.desc.wecom", connectable: true },
   { type: "wechat", name: "微信", descKey: "int.channel.desc.generic", connectable: false },
-  { type: "zalo_app", name: "Zalo App", descKey: "int.channel.desc.generic", connectable: false, glyph: "Za" },
-  { type: "slack", name: "Slack", descKey: "int.channel.desc.generic", connectable: false },
-  { type: "vk", name: "VKontakte", descKey: "int.channel.desc.generic", connectable: false, glyph: "VK" },
+  { type: "zalo_app", name: "Zalo OA", descKey: "int.channel.desc.zalo_app", connectable: true, glyph: "Za" },
+  { type: "slack", name: "Slack", descKey: "int.channel.desc.slack", connectable: true },
+  { type: "vk", name: "VKontakte", descKey: "int.channel.desc.vk", connectable: true, glyph: "VK" },
 ];
 
 export const CHANNEL_NAME: Record<string, string> = Object.fromEntries(

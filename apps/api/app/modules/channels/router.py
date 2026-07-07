@@ -35,19 +35,54 @@ from ...settings import get_settings
 
 router = APIRouter(prefix="/api/v1", tags=["channels"])
 
+# Frontend-facing channel names → canonical adapter channel_type. The gallery
+# uses whatsapp_api/telegram_bot; adapters register as whatsapp_cloud/telegram_bot.
+_CHANNEL_ALIASES = {
+    "whatsapp_api": "whatsapp_cloud",
+    "telegram": "telegram_bot",
+}
+
 _CONNECTABLE = {
     "widget",
-    "telegram",
+    "telegram_bot",
     "whatsapp_cloud",
     "messenger",
     "instagram",
     "line_oa",
     "email",
+    "whatsapp_bsp",
+    # Phase 4 — validated through adapter.connect_validate (see _DISPATCH_TYPES).
+    "slack",
+    "vk",
+    "wechat_kf",
+    "wecom",
+    "tiktok_business",
+    "youtube",
+    "zalo_app",
+}
+
+# Phase 4 channels whose connect-time validation is delegated to the adapter's
+# connect_validate() rather than an inline branch here. Their adapter must be
+# registered (registry auto-discovery) before connect will accept them.
+_DISPATCH_TYPES = frozenset(
+    {"slack", "vk", "wechat_kf", "wecom", "tiktok_business", "youtube", "zalo_app", "whatsapp_bsp"}
+)
+
+# Per-account webhook path segment for channels that carry a path secret; used
+# to surface the full webhook URL in the connect response when the adapter asks
+# for one (needs_webhook_secret). Slack (app-level URL) and YouTube (polling)
+# are intentionally absent.
+_HOOK_PATH = {
+    "vk": "vk",
+    "wechat_kf": "wechat",
+    "wecom": "wechat",  # WeCom shares /hooks/wechat/{secret}, routed by channel_type
+    "zalo_app": "zalo",
+    "tiktok_business": "tiktok",
 }
 
 # per-type credential fields accepted at connect time (everything else → config)
 _CRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "telegram": ("bot_token",),
+    "telegram_bot": ("bot_token",),
     "whatsapp_cloud": ("access_token",),
     "messenger": ("page_access_token",),
     "instagram": ("page_access_token",),
@@ -91,10 +126,38 @@ async def list_accounts(
 
 
 class ConnectBody(BaseModel):
+    """Accepts EITHER a flat form body ({bot_token, phone_number_id, ...} — what
+    every connect modal POSTs) OR the legacy nested {credentials, config} shape.
+    Extra fields are captured and split by _normalize_connect_body()."""
+
+    model_config = {"extra": "allow"}
+
     name: str = Field(default="", max_length=128)
-    credentials: dict[str, Any] = Field(default_factory=dict)
-    config: dict[str, Any] = Field(default_factory=dict)
+    credentials: dict[str, Any] | None = None
+    config: dict[str, Any] | None = None
     external_id: str | None = None
+
+
+# keys whose presence marks a value as a secret → envelope-encrypted credentials.
+_SECRET_HINTS = ("token", "secret", "password", "key", "api_key")
+_NON_SECRET = frozenset({"name", "external_id", "credentials", "config"})
+
+
+def _normalize_connect_body(body: ConnectBody) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (credentials, config). Nested body passes through; a flat body is
+    split — secret-ish keys → credentials (encrypted at rest), the rest → config.
+    Drift-tolerant: adapters receive a merged view for validation, so a field the
+    UI names slightly differently than the adapter expects still resolves."""
+    if body.credentials is not None or body.config is not None:
+        return (
+            {k: v for k, v in (body.credentials or {}).items() if v is not None},
+            dict(body.config or {}),
+        )
+    extra = getattr(body, "model_extra", None) or {}
+    flat = {k: v for k, v in extra.items() if k not in _NON_SECRET and v is not None}
+    credentials = {k: v for k, v in flat.items() if any(h in k.lower() for h in _SECRET_HINTS)}
+    config = {k: v for k, v in flat.items() if k not in credentials}
+    return credentials, config
 
 
 async def _check_channel_quota(session: AsyncSession, member: MemberContext) -> None:
@@ -120,24 +183,32 @@ async def connect_account(
     member: MemberContext = Depends(require_permission("channels.manage")),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    channel_type = _CHANNEL_ALIASES.get(channel_type, channel_type)
     if channel_type not in _CONNECTABLE or channel_type not in registered_channel_types():
         raise HTTPException(422, f"unsupported channel type: {channel_type}")
     await _check_channel_quota(session, member)
 
     settings = get_settings()
     webhook_secret = secrets.token_urlsafe(24)
-    credentials = {k: v for k, v in body.credentials.items() if v is not None}
-    config = dict(body.config)
+    credentials, config = _normalize_connect_body(body)
+    # WhatsApp card posts channel_type=whatsapp_api for both direct Cloud API and
+    # BSP proxies; a non-cloud bsp selector routes to the whatsapp_bsp adapter.
+    if channel_type == "whatsapp_cloud" and str(config.get("bsp", "")).lower() not in (
+        "", "cloud", "direct",
+    ):
+        channel_type = "whatsapp_bsp"
     external_id = (body.external_id or "").strip()
     name = body.name.strip()
     health_detail: dict[str, Any] = {}
+    needs_hook_secret = False
+    dispatch_status: str | None = None
 
     if channel_type == "widget":
         raise HTTPException(422, "create widgets via POST /api/v1/widgets")
 
     adapter = get_adapter(channel_type)
 
-    if channel_type == "telegram":
+    if channel_type == "telegram_bot":
         token = credentials.get("bot_token", "")
         if not token:
             raise HTTPException(422, "bot_token required")
@@ -170,6 +241,25 @@ async def connect_account(
             if not config.get(k):
                 raise HTTPException(422, f"{k} required")
         external_id = str(config["address"]).lower()
+    elif channel_type in _DISPATCH_TYPES:
+        # Phase 4: the adapter authenticates, resolves the provider account id,
+        # registers the webhook and reports health. Pass a MERGED view so an
+        # adapter that expects e.g. corp_id in config and secret in credentials
+        # finds both regardless of how the flat body was bucketed.
+        merged = {**config, **credentials}
+        cr = await adapter.connect_validate(merged, merged)
+        if not cr.health.ok and cr.health.status not in ("active", "pending"):
+            detail = cr.health.detail or {}
+            raise HTTPException(422, f"{channel_type}: {detail.get('error') or 'validation failed'}")
+        external_id = (cr.external_id or external_id).strip()
+        if not external_id:
+            raise HTTPException(422, f"{channel_type}: could not determine account id")
+        name = name or cr.name
+        if cr.config_patch:
+            config = {**config, **cr.config_patch}
+        health_detail = {**health_detail, **cr.health.detail}
+        needs_hook_secret = cr.needs_webhook_secret
+        dispatch_status = "active" if cr.health.ok else cr.health.status
 
     dup = (
         await session.execute(
@@ -197,13 +287,19 @@ async def connect_account(
     if credentials:
         await set_credentials(session, acct, credentials)
 
-    # live health probe (best effort; failures surface as status)
-    try:
-        result = await adapter.check_health(acct, credentials)
-        acct.status = result.status if not result.ok else "active"
-        acct.health = {**health_detail, **result.detail}
-    except Exception:  # noqa: BLE001 — probe must not block connect
-        acct.health = {**health_detail, "probe": "failed"}
+    # live health probe (best effort; failures surface as status). Phase 4
+    # dispatch channels already validated in connect_validate — trust that
+    # result instead of re-probing (avoids a second network round-trip).
+    if dispatch_status is not None:
+        acct.status = dispatch_status
+        acct.health = health_detail
+    else:
+        try:
+            result = await adapter.check_health(acct, credentials)
+            acct.status = result.status if not result.ok else "active"
+            acct.health = {**health_detail, **result.detail}
+        except Exception:  # noqa: BLE001 — probe must not block connect
+            acct.health = {**health_detail, "probe": "failed"}
 
     session.add(
         AuditLog(
@@ -217,7 +313,15 @@ async def connect_account(
         )
     )
     await session.commit()
-    return _serialize_account(acct)
+    out = _serialize_account(acct)
+    # surface the per-account webhook URL+secret once, so the operator can paste
+    # it into the provider console (VK/WeChat/Zalo/TikTok path-secret channels).
+    if needs_hook_secret and channel_type in _HOOK_PATH:
+        out["webhook_secret"] = acct.webhook_secret
+        out["webhook_url"] = (
+            f"{settings.public_base_url}/hooks/{_HOOK_PATH[channel_type]}/{acct.webhook_secret}"
+        )
+    return out
 
 
 @router.delete("/channels/accounts/{account_id}", status_code=204)
