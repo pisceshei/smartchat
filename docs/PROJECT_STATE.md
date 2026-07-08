@@ -67,6 +67,29 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `lavender-candle`/`rose-diffuser`/`sleep-spray`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Round 5 (2026-07-08, commit `82e074f`, E2E-verified in prod): four fixes** —
+  (1) *Inbox realtime*: ingress now publish_realtime()s inbound messages (side
+  effects unified via `messaging.register_inbound_message`), `client_frame`
+  emits canonical compat keys (id/payload/conversation_id), ws.ts normalizes
+  frames + lazy token + tryRefresh on 4401, applyEvent rebuilds from flat
+  fields and always degrades to invalidateQueries; widget accepts the canonical
+  envelope. Verified: visitor message → list bump/snippet/unread + thread all
+  update live, AI reply streams in live, zero refreshes. (2) *Notifications*:
+  one-time permission prompt (user-gesture button), desktop default ON once
+  granted (persist v1 migration), popup whenever not viewing that conversation.
+  User still needs to click 開啟通知 once to grant browser permission.
+  (3) *AI 託管 semantics*: bot_managed is the single switch — human interjection
+  no longer pauses the AI (verified live), kb_miss/[HANDOFF:no_context]/
+  llm_error/external_error fail soft and stay managed, keyword + explicit model
+  handoffs still hard-off (verified: model emitted HANDOFF:discount_confirmation
+  on a discount question → toggle visibly OFF + note), toggling 託管 back ON
+  re-attaches an AI member (verified: AI resumed replying). (4) *Telegram*: dup
+  check now precedes setWebhook (secret-rotation black hole), unmatched-secret
+  drops log at error level. **The production bot account is still soft-deleted —
+  user must re-add @chilllove_bot once in 渠道 (re-add now works).**
+- Minor UI nit (new): after a conversation.updated realtime patch the header
+  can show 未命名訪客 while the list keeps the contact name — display-name field
+  probably clobbered by a partial patch; cosmetic, refresh restores it.
 - **Server is deployed from branch `fix/outbound-dispatch`** (contains main +
   outbound-dispatch fix + bridge LID fix, all E2E-verified in prod 2026-07-08:
   WhatsApp AI/agent replies now show ✓✓ read receipts). TODO: merge that branch
