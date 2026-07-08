@@ -224,6 +224,7 @@ export const zhHant = {
   "cust.col.oneId": "ONE ID",
   "cust.col.channels": "社媒渠道",
   "cust.col.assignee": "接待成員",
+  "cust.col.phone": "電話",
   "cust.col.email": "郵箱",
   "cust.col.tags": "標籤",
   "cust.col.lastActive": "最後活躍",

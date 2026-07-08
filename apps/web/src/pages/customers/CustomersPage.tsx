@@ -39,6 +39,7 @@ const ALL_COLUMNS = [
   { key: "one_id", label: t("cust.col.oneId") },
   { key: "channels", label: t("cust.col.channels") },
   { key: "assignee", label: t("cust.col.assignee") },
+  { key: "phone", label: t("cust.col.phone") },
   { key: "email", label: t("cust.col.email") },
   { key: "tags", label: t("cust.col.tags") },
   { key: "last_active", label: t("cust.col.lastActive") },
@@ -46,12 +47,25 @@ const ALL_COLUMNS = [
 
 type ColKey = (typeof ALL_COLUMNS)[number]["key"];
 
-const COL_STORE_KEY = "smartchat.customers.columns";
+// v2: the 電話 column was added after v1 shipped — migrating (rather than
+// reusing the v1 key) makes it visible once for users whose saved v1 layout
+// predates it, while still letting them hide it afterwards.
+const COL_STORE_KEY = "smartchat.customers.columns.v2";
+const COL_STORE_KEY_V1 = "smartchat.customers.columns";
 
 function loadVisibleCols(): ColKey[] {
   try {
     const raw = localStorage.getItem(COL_STORE_KEY);
     if (raw) return JSON.parse(raw) as ColKey[];
+    const v1 = localStorage.getItem(COL_STORE_KEY_V1);
+    if (v1) {
+      const cols = JSON.parse(v1) as ColKey[];
+      if (!cols.includes("phone")) {
+        cols.splice(Math.max(cols.indexOf("email"), 0), 0, "phone");
+      }
+      localStorage.setItem(COL_STORE_KEY, JSON.stringify(cols));
+      return cols;
+    }
   } catch {
     /* default below */
   }
@@ -166,6 +180,17 @@ export function CustomersPage() {
         key: "assignee",
         width: 120,
         render: (_, c) => c.assignee_name ?? <span className="sc-text-tertiary">-</span>,
+      },
+      phone: {
+        title: t("cust.col.phone"),
+        key: "phone",
+        width: 150,
+        render: (_, c) =>
+          c.phone ? (
+            <span className="sc-mono" style={{ fontSize: 12 }}>{c.phone}</span>
+          ) : (
+            <span className="sc-text-tertiary">-</span>
+          ),
       },
       email: {
         title: t("cust.col.email"),
