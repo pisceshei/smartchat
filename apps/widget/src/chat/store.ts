@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { WidgetBootstrap } from "../shared/config";
 import type { WireMessage } from "../shared/content";
 import type { LoginInfo } from "../shared/protocol";
+import type { Lang } from "./i18n";
 
 export type ConnState = "boot" | "connecting" | "online" | "reconnecting";
 
@@ -15,9 +16,11 @@ export interface UiMessage extends WireMessage {
 export interface AppState {
   ready: boolean;
   config: WidgetBootstrap | null;
-  lang: "en" | "zh-Hant";
+  lang: Lang;
   open: boolean;
   conn: ConnState;
+  /** current screen inside the panel (home only when config.home.enabled) */
+  view: "home" | "chat";
   messages: UiMessage[];
   agentTyping: boolean;
   unread: number;
@@ -64,6 +67,7 @@ export const store = createStore<AppState>({
   lang: "en",
   open: false,
   conn: "boot",
+  view: "chat",
   messages: [],
   agentTyping: false,
   unread: 0,

@@ -27,6 +27,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { Button, Result } from "antd";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { ComingSoon } from "@/components/ComingSoon";
@@ -71,6 +72,37 @@ import { InvoicesPage } from "@/pages/billing/InvoicesPage";
 import { PointsPage } from "@/pages/billing/PointsPage";
 import { SubscriptionPage } from "@/pages/billing/SubscriptionPage";
 
+/** 全局錯誤邊界 — 單頁崩潰時顯示可重載的錯誤頁，避免整個 SPA 白屏。 */
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error("[ErrorBoundary]", error, info.componentStack);
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <Result
+          status="error"
+          title={t("common.errorTitle")}
+          subTitle={t("common.errorDesc")}
+          extra={
+            <Button type="primary" onClick={() => location.reload()}>
+              {t("common.reload")}
+            </Button>
+          }
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function NotFound() {
   const navigate = useNavigate();
   return (
@@ -89,7 +121,8 @@ function NotFound() {
 
 export function App() {
   return (
-    <Routes>
+    <ErrorBoundary>
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
 
@@ -293,7 +326,8 @@ export function App() {
         </Route>
 
         <Route path="*" element={<NotFound />} />
-      </Route>
-    </Routes>
+        </Route>
+      </Routes>
+    </ErrorBoundary>
   );
 }

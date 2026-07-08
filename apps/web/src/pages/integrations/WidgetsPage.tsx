@@ -119,11 +119,11 @@ export function WidgetsPage() {
     },
     {
       title: t("common.status"),
-      dataIndex: "status",
+      dataIndex: "enabled",
       width: 100,
-      render: (v: WidgetConfig["status"]) => (
-        <Tag color={v === "active" ? "success" : "default"}>
-          {v === "active" ? t("common.enabled") : t("common.disabled")}
+      render: (v: WidgetConfig["enabled"]) => (
+        <Tag color={v ? "success" : "default"}>
+          {v ? t("common.enabled") : t("common.disabled")}
         </Tag>
       ),
     },

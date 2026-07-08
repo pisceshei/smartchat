@@ -93,9 +93,19 @@ declare global {
   const assetBase = (settings.assetBase || srcOrigin).replace(/\/$/, "");
   const endpoints: Endpoints = { apiBase, wsBase };
 
-  const lang = (() => {
-    const l = (settings.lang || navigator.language || "en").toLowerCase();
-    return l.indexOf("zh") === 0 ? "zh-Hant" : "en";
+  // Raw BCP47 tag, passed through to the chat app whose detectLang() picks
+  // the UI locale; uiLang is the same mapping applied locally for launcher
+  // text lookups.
+  const lang = (
+    settings.lang ||
+    document.documentElement.lang ||
+    navigator.language ||
+    "en"
+  ).trim() || "en";
+  const uiLang = (() => {
+    const l = lang.toLowerCase();
+    if (l.indexOf("zh") !== 0) return "en";
+    return /^zh[-_]?(cn|sg|hans)/.test(l) ? "zh-CN" : "zh-Hant";
   })();
 
   // ---- state ---------------------------------------------------------------
@@ -241,7 +251,7 @@ declare global {
     launcher.type = "button";
     launcher.setAttribute(
       "aria-label",
-      localized(ap.launcher_text, lang) || "Chat",
+      localized(ap.launcher_text, uiLang) || "Chat",
     );
     launcher.innerHTML = ICON_CHAT + ICON_X;
     badge = document.createElement("span");

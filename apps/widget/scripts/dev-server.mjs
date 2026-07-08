@@ -61,6 +61,17 @@ const BOOTSTRAP = {
   },
   appearance: { position: "right", primary_color: "#4F46E5", show_branding: true },
   locale_default: "en",
+  home: {
+    enabled: true,
+    banners: [
+      {
+        image_url: "https://placehold.co/640x240/4F46E5/FFFFFF?text=Summer+Sale+-20%25",
+        link_url: "https://example.com/sale",
+      },
+      { image_url: "https://placehold.co/640x240/0EA5E9/FFFFFF?text=New+Arrivals" },
+    ],
+    reply_hint: "We typically reply in a few minutes",
+  },
   pre_chat: {
     enabled: true,
     required_before_chat: false,

@@ -64,6 +64,12 @@ services:
     <<: *backend
     command: python -m apps.flow_engine.runtime
 
+  # AI 成員自動接待 consumer (group ai-agent on events:conversation) — replies
+  # on handler=ai_agent conversations and pauses AI when a human interjects.
+  ai-agent:
+    <<: *backend
+    command: python -m apps.api.app.ai.consumer
+
   edge:
     <<: *backend
     command: uvicorn apps.edge.main:app --host 0.0.0.0 --port 8002

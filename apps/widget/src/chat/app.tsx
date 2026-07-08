@@ -6,6 +6,7 @@ import { t } from "./i18n";
 import { useAppState } from "./store";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
+import { BottomNav, HomeScreen } from "./components/HomeScreen";
 import { MessageList } from "./components/MessageList";
 import { OfflineNotice } from "./components/OfflineNotice";
 import { PreChatForm } from "./components/PreChatForm";
@@ -42,31 +43,40 @@ export function App() {
 
   const showPrechat = s.prechatVisible || s.prechatBlocking;
   const features = s.config.features || {};
+  const homeEnabled = !!s.config.home?.enabled;
+  const onHome = homeEnabled && s.view === "home";
 
   return (
     <div class="sc-app">
-      <Header config={s.config} conn={s.conn} />
-      {showPrechat ? (
-        <PreChatForm config={s.config} blocking={s.prechatBlocking} lang={s.lang} />
+      {onHome ? (
+        <HomeScreen config={s.config} lang={s.lang} />
       ) : (
-        <MessageList
-          messages={s.messages}
-          config={s.config}
-          agentTyping={s.agentTyping}
-          answeredQuickBlocks={s.answeredQuickBlocks}
-          offlineBanner={
-            <OfflineNotice config={s.config} lang={s.lang} emailSaved={s.offlineEmailSaved} />
-          }
-        />
+        <>
+          <Header config={s.config} conn={s.conn} />
+          {showPrechat ? (
+            <PreChatForm config={s.config} blocking={s.prechatBlocking} lang={s.lang} />
+          ) : (
+            <MessageList
+              messages={s.messages}
+              config={s.config}
+              agentTyping={s.agentTyping}
+              answeredQuickBlocks={s.answeredQuickBlocks}
+              offlineBanner={
+                <OfflineNotice config={s.config} lang={s.lang} emailSaved={s.offlineEmailSaved} />
+              }
+            />
+          )}
+          {!showPrechat ? (
+            <Composer
+              disabled={s.conn === "boot"}
+              allowUpload={features.file_upload !== false}
+              allowEmoji={features.emoji !== false}
+              error={s.composerError}
+            />
+          ) : null}
+        </>
       )}
-      {!showPrechat ? (
-        <Composer
-          disabled={s.conn === "boot"}
-          allowUpload={features.file_upload !== false}
-          allowEmoji={features.emoji !== false}
-          error={s.composerError}
-        />
-      ) : null}
+      {homeEnabled ? <BottomNav view={onHome ? "home" : "chat"} unread={s.unread} /> : null}
       {s.config.appearance?.show_branding !== false ? (
         <div class="sc-branding">
           {t("powered_by")} <strong>SmartChat</strong>

@@ -142,13 +142,19 @@ def is_on_shift(
     return any(wd == weekday and start <= minute < end for wd, start, end in shifts)
 
 
-def pick_ai(candidates: list[AICandidate]) -> AICandidate | None:
+def pick_ai(
+    candidates: list[AICandidate], *, preferred_member_id: uuid.UUID | None = None
+) -> AICandidate | None:
     """First AI member with receiving enabled and headroom (stable order =
-    creation order, mirroring the product's deterministic AI pick)."""
-    for c in candidates:
-        if c.receive_enabled and c.under_cap:
-            return c
-    return None
+    creation order, mirroring the product's deterministic AI pick). A widget's
+    pinned AI (config.routing.ai_agent_id) wins when it is itself eligible;
+    otherwise fall back to the first eligible one."""
+    eligible = [c for c in candidates if c.receive_enabled and c.under_cap]
+    if preferred_member_id is not None:
+        for c in eligible:
+            if c.member_id == preferred_member_id:
+                return c
+    return eligible[0] if eligible else None
 
 
 def pick_human(
@@ -181,6 +187,7 @@ def decide_route(
     strategy: str = "round_robin",
     rr_counter: int = 0,
     pinned_member_ids: list[uuid.UUID] | None = None,
+    preferred_ai_member_id: uuid.UUID | None = None,
     prefer_bot: bool = True,
     prefer_ai_member: bool = True,
     auto_assign: bool = True,
@@ -190,7 +197,7 @@ def decide_route(
     if prefer_bot and bot_available:
         return RouteDecision(handler="bot")
     if prefer_ai_member:
-        ai = pick_ai(ai_candidates)
+        ai = pick_ai(ai_candidates, preferred_member_id=preferred_ai_member_id)
         if ai is not None:
             return RouteDecision(handler="ai_agent", member_id=ai.member_id)
     if auto_assign:
@@ -273,18 +280,19 @@ async def _bot_flow_available(session: AsyncSession, conversation: Conversation)
 
 async def _widget_routing(
     session: AsyncSession, conversation: Conversation
-) -> tuple[list[uuid.UUID], str | None]:
-    """widget.config.routing = {"member_ids": [...], "strategy": "..."} —
-    指派成員 pins routing to those members."""
+) -> tuple[list[uuid.UUID], str | None, uuid.UUID | None]:
+    """widget.config.routing = {"member_ids": [...], "strategy": "...",
+    "ai_agent_id": "..."} — 指派成員 pins routing to those members;
+    ai_agent_id pins the preferred AI 接待."""
     if conversation.channel_type != "widget":
-        return [], None
+        return [], None, None
     widget = (
         await session.execute(
             select(Widget).where(Widget.channel_account_id == conversation.channel_account_id)
         )
     ).scalars().first()
     if widget is None:
-        return [], None
+        return [], None, None
     routing = (widget.config or {}).get("routing") or {}
     pinned: list[uuid.UUID] = []
     for raw in routing.get("member_ids") or []:
@@ -292,7 +300,33 @@ async def _widget_routing(
             pinned.append(uuid.UUID(str(raw)))
         except ValueError:
             continue
-    return pinned, routing.get("strategy")
+    ai_agent_id: uuid.UUID | None = None
+    if routing.get("ai_agent_id"):
+        try:
+            ai_agent_id = uuid.UUID(str(routing["ai_agent_id"]))
+        except ValueError:
+            pass
+    return pinned, routing.get("strategy"), ai_agent_id
+
+
+async def _resolve_ai_member_id(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    ai_agent_id: uuid.UUID | None,
+    ai_candidates: list[AICandidate],
+) -> uuid.UUID | None:
+    """config.routing.ai_agent_id may hold the AI member id directly or the
+    AIAgent row id — normalize to a member id for pick_ai."""
+    if ai_agent_id is None:
+        return None
+    if any(c.member_id == ai_agent_id for c in ai_candidates):
+        return ai_agent_id
+    from ..models.ai import AIAgent
+
+    agent = await session.get(AIAgent, ai_agent_id)
+    if agent is not None and agent.workspace_id == workspace_id:
+        return agent.member_id
+    return None
 
 
 async def _gather_ai_candidates(
@@ -522,8 +556,11 @@ async def route_new_inbound(
         )
         ai_candidates = await _gather_ai_candidates(session, redis, workspace_id)
         human_candidates = await _gather_human_candidates(session, redis, workspace, now=now)
-        pinned, widget_strategy = await _widget_routing(session, conversation)
+        pinned, widget_strategy, widget_ai_id = await _widget_routing(session, conversation)
         strategy = widget_strategy or cfg.get("mode", "round_robin")
+        preferred_ai = await _resolve_ai_member_id(
+            session, workspace_id, widget_ai_id, ai_candidates
+        )
 
         decision = RouteDecision(handler="unassigned")
         remaining_ai = list(ai_candidates)
@@ -537,6 +574,7 @@ async def route_new_inbound(
                 strategy=strategy,
                 rr_counter=rr_counter,
                 pinned_member_ids=pinned,
+                preferred_ai_member_id=preferred_ai,
                 prefer_bot=cfg.get("prefer_bot", True),
                 prefer_ai_member=cfg.get("prefer_ai_member", True),
                 auto_assign=cfg.get("auto_assign", True),
@@ -551,6 +589,7 @@ async def route_new_inbound(
                     strategy=strategy,
                     rr_counter=rr_counter,
                     pinned_member_ids=pinned,
+                    preferred_ai_member_id=preferred_ai,
                     prefer_bot=cfg.get("prefer_bot", True),
                     prefer_ai_member=cfg.get("prefer_ai_member", True),
                     auto_assign=cfg.get("auto_assign", True),

@@ -50,6 +50,12 @@ _IN_ATTACH = {"image": "image", "video": "video", "audio": "audio", "file": "fil
 DEFAULT_MESSAGE_TAG = "HUMAN_AGENT"
 
 
+def _page_token(credentials: dict[str, Any]) -> str:
+    """Page token under either key — the connect modal stores page_access_token,
+    older accounts store access_token."""
+    return credentials.get("access_token") or credentials.get("page_access_token", "")
+
+
 class MessengerAdapter(BaseAdapter):
     channel_type: ClassVar[str] = "messenger"
 
@@ -231,7 +237,7 @@ class MessengerAdapter(BaseAdapter):
     async def send(
         self, account: Any, credentials: dict[str, Any], to: str, payload: dict[str, Any]
     ) -> SendResult:
-        token = credentials.get("access_token", "")
+        token = _page_token(credentials)
         tag = payload.get("_tag")
         body: dict[str, Any] = {
             "recipient": {"id": to},
@@ -285,7 +291,7 @@ class MessengerAdapter(BaseAdapter):
         try:
             await self.http.post(
                 f"{GRAPH_BASE}/me/messages",
-                params={"access_token": credentials.get("access_token", "")},
+                params={"access_token": _page_token(credentials)},
                 json={
                     "recipient": {"id": to},
                     "sender_action": "typing_on" if on else "typing_off",
@@ -307,7 +313,7 @@ class MessengerAdapter(BaseAdapter):
         try:
             await self.http.post(
                 f"{GRAPH_BASE}/me/messages",
-                params={"access_token": credentials.get("access_token", "")},
+                params={"access_token": _page_token(credentials)},
                 json={"recipient": {"id": to}, "sender_action": "mark_seen"},
             )
         except httpx.HTTPError:
@@ -319,7 +325,7 @@ class MessengerAdapter(BaseAdapter):
                 f"{GRAPH_BASE}/{account.external_id}",
                 params={
                     "fields": "id,name",
-                    "access_token": credentials.get("access_token", ""),
+                    "access_token": _page_token(credentials),
                 },
             )
             data = r.json()
@@ -340,7 +346,7 @@ class MessengerAdapter(BaseAdapter):
                 f"{GRAPH_BASE}/{user_id}",
                 params={
                     "fields": "first_name,last_name,profile_pic",
-                    "access_token": credentials.get("access_token", ""),
+                    "access_token": _page_token(credentials),
                 },
             )
             if r.status_code >= 400:

@@ -153,6 +153,7 @@ function init(msg: Extract<LoaderToChat, { t: "init" }>): void {
     lang,
     open: msg.open,
     conn: "connecting",
+    view: config.home?.enabled ? "home" : "chat",
     prechatBlocking: prechatEnabled && !!pc?.required_before_chat && !prechatDone,
     prechatVisible: prechatEnabled && !prechatDone,
     offlineEmailSaved: !!lsGet(LS.offlineEmail()),
@@ -265,10 +266,10 @@ function handleEvent(_seq: number, event: WidgetEvent): void {
       if (m.sender_type !== "contact") {
         store.set({ agentTyping: false });
         const s = store.get();
-        if (!s.open) {
+        if (!s.open || s.view === "home") {
           const unread = s.unread + 1;
           store.set({ unread });
-          postToParent({ t: "unread", count: unread });
+          if (!s.open) postToParent({ t: "unread", count: unread });
         }
       }
       break;
@@ -322,6 +323,15 @@ function setVisibility(open: boolean): void {
 
 export function requestClose(): void {
   if (embedded) postToParent({ t: "request_close" });
+}
+
+export function goChat(): void {
+  store.set({ view: "chat", unread: 0 });
+  postToParent({ t: "unread", count: 0 });
+}
+
+export function goHome(): void {
+  store.set({ view: "home" });
 }
 
 function applyLogin(info: LoginInfo): void {
@@ -449,7 +459,19 @@ export function submitPrechat(values: Record<string, unknown>): void {
   lsSet(LS.prechat(), "1");
   store.set({ prechatBlocking: false, prechatVisible: false });
   whenSession(() => {
-    api?.lead(values, currentPage).catch(() => undefined);
+    api
+      ?.lead(values, currentPage)
+      .then(() => {
+        // Reference behavior: the submitted details also land in the
+        // conversation as a normal visitor message, one field per line.
+        const s = store.get();
+        const fields = s.config?.pre_chat?.fields ?? [];
+        const lines = fields
+          .filter((f) => typeof values[f.key] === "string" && (values[f.key] as string).trim())
+          .map((f) => `${localized(f.label, s.lang) || f.key}: ${values[f.key] as string}`);
+        if (lines.length > 0) sendText(lines.join("\n"));
+      })
+      .catch(() => undefined);
   });
   if (typeof values["email"] === "string" && values["email"]) {
     lsSet(LS.offlineEmail(), values["email"] as string);

@@ -37,8 +37,13 @@ export interface WidgetBootstrap {
     show_branding?: boolean;
     launcher_text?: LocalizedText;
   } | null;
-  /** Default UI language when auto-detect has no match ("en" | "zh-Hant"). */
+  /** Default UI language when auto-detect has no match ("en" | "zh-Hant" | "zh-CN"). */
   locale_default?: string | null;
+  home?: {
+    enabled?: boolean;
+    banners?: { image_url: string; link_url?: string }[];
+    reply_hint?: string;
+  } | null;
   pre_chat?: {
     enabled?: boolean;
     /** When true the visitor must submit the form before chatting. */

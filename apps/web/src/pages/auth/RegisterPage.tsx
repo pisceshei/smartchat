@@ -26,11 +26,11 @@ export function RegisterPage() {
     try {
       const res = await authApi.register({
         name: values.name,
-        email: values.email,
+        email: values.email.trim().toLowerCase(),
         password: values.password,
         workspace_name: values.workspace_name,
       });
-      setAuth(res.token, res.user, res.workspaces);
+      setAuth(res.token, res.user, res.workspaces, res.refreshToken);
       navigate("/inbox", { replace: true });
     } catch {
       message.error(t("auth.registerFailed"));

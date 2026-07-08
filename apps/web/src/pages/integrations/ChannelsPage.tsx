@@ -3,6 +3,7 @@ import { AppstoreOutlined, DeleteOutlined, PlusOutlined, SettingOutlined } from 
 import { App, Badge, Button, Card, Drawer, List, Popconfirm, Skeleton, Tag } from "antd";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import { channelsApi } from "@/api/endpoints";
 import type { ChannelAccount, ChannelAccountStatus, ChannelType } from "@/api/types";
 import { ChannelIcon } from "@/components/ChannelIcon";
@@ -52,7 +53,8 @@ export function ChannelsPage() {
       message.success(t("common.deleteSuccess"));
       void qc.invalidateQueries({ queryKey: ["channel-accounts"] });
     },
-    onError: () => message.error(t("common.operationFailed")),
+    onError: (e) =>
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed")),
   });
 
   const byType = useMemo(() => {
@@ -188,11 +190,6 @@ export function ChannelsPage() {
       <LineConnectModal
         open={connectType === "line_oa"}
         channelType="line_oa"
-        onClose={() => setConnectType(null)}
-      />
-      <LineConnectModal
-        open={connectType === "line_app"}
-        channelType="line_app"
         onClose={() => setConnectType(null)}
       />
       <EmailConnectModal open={connectType === "email"} onClose={() => setConnectType(null)} />

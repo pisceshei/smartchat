@@ -1,6 +1,6 @@
-/** zh-Hant + en UI strings, auto-selected from navigator.language. */
+/** zh-Hant + zh-CN + en UI strings, auto-selected from navigator.language. */
 
-export type Lang = "en" | "zh-Hant";
+export type Lang = "en" | "zh-Hant" | "zh-CN";
 
 const STRINGS: Record<Lang, Record<string, string>> = {
   en: {
@@ -38,6 +38,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     upload_failed: "Upload failed, please try again",
     select_placeholder: "Please select…",
     you: "You",
+    home_new_conversation: "New Conversation",
+    home_reply_hint: "We typically reply in a few minutes",
+    home_tab_home: "Home",
+    home_tab_chat: "Chat",
+    home_online_hint: "Need help? We are online!",
+    home_offline_hint: "Leave a message and we will get back to you.",
   },
   "zh-Hant": {
     online: "在線",
@@ -74,12 +80,61 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     upload_failed: "上傳失敗，請重試",
     select_placeholder: "請選擇…",
     you: "您",
+    home_new_conversation: "新對話",
+    home_reply_hint: "我們通常在幾分鐘內回覆",
+    home_tab_home: "首頁",
+    home_tab_chat: "對話",
+    home_online_hint: "需要幫助嗎？我們在線上！",
+    home_offline_hint: "請留言，我們會盡快回覆您。",
+  },
+  "zh-CN": {
+    online: "在线",
+    offline: "离线",
+    connecting: "连接中…",
+    reconnecting: "重新连接中…",
+    typing: "正在输入…",
+    composer_placeholder: "输入消息…",
+    send: "发送",
+    emoji: "表情",
+    attach: "附加文件",
+    close: "关闭",
+    prechat_title: "开始对话前",
+    prechat_intro: "请留下您的资料，让我们更好地为您服务。",
+    start_chat: "开始对话",
+    skip: "跳过",
+    required: "必填",
+    invalid_email: "请输入有效的电子邮箱地址",
+    invalid_phone: "请输入有效的电话号码",
+    offline_notice: "我们目前不在线。请留言，我们会尽快回复您。",
+    offline_email_label: "您的电子邮箱（以便回复您）",
+    offline_email_save: "确定",
+    offline_email_saved: "已收到！我们会通过电子邮件回复您。",
+    failed: "发送失败",
+    retry: "重试",
+    file: "文件",
+    image: "图片",
+    voice: "语音消息",
+    video: "视频",
+    today: "今天",
+    welcome_default: "您好！请问有什么可以帮到您？",
+    powered_by: "技术支持",
+    upload_too_large: "文件过大（上限 20MB）",
+    upload_failed: "上传失败，请重试",
+    select_placeholder: "请选择…",
+    you: "您",
+    home_new_conversation: "新对话",
+    home_reply_hint: "我们通常在几分钟内回复",
+    home_tab_home: "首页",
+    home_tab_chat: "对话",
+    home_online_hint: "需要帮助吗？我们在线上！",
+    home_offline_hint: "请留言，我们会尽快回复您。",
   },
 };
 
 export function detectLang(preferred?: string | null): Lang {
   const l = (preferred || navigator.language || "en").toLowerCase();
-  return l.indexOf("zh") === 0 || l === "zh-hant" ? "zh-Hant" : "en";
+  if (l.indexOf("zh") !== 0) return "en";
+  return /^zh[-_]?(cn|sg|hans)/.test(l) ? "zh-CN" : "zh-Hant";
 }
 
 let current: Lang = "en";
@@ -98,7 +153,7 @@ export function t(key: string): string {
 
 export function formatTime(iso: string): string {
   try {
-    return new Intl.DateTimeFormat(current === "zh-Hant" ? "zh-Hant" : "en", {
+    return new Intl.DateTimeFormat(current, {
       hour: "2-digit",
       minute: "2-digit",
     }).format(new Date(iso));

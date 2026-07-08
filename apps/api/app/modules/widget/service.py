@@ -90,6 +90,7 @@ async def assemble_bootstrap(
         "brand": cfg.get("brand") or {"name": widget.name or None},
         "appearance": appearance,
         "locale_default": cfg.get("locale_default"),
+        "home": cfg.get("home"),
         "pre_chat": cfg.get("pre_chat"),
         "offline": offline,
         "features": cfg.get("features") or {"file_upload": True, "emoji": True},

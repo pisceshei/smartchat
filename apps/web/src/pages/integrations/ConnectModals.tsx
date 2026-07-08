@@ -29,7 +29,8 @@ function useConnect(channelType: ChannelType, onDone: () => void) {
       void qc.invalidateQueries({ queryKey: ["channel-accounts"] });
       onDone();
     },
-    onError: () => message.error(t("common.operationFailed")),
+    onError: (e) =>
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed")),
   });
 }
 
@@ -101,6 +102,11 @@ function ConnectModalShell({
       width={width}
       destroyOnHidden
     >
+      {/* 隱藏誘餌欄位 — 吸收瀏覽器密碼管理器的自動填充 */}
+      <div style={{ display: "none" }} aria-hidden>
+        <input type="text" autoComplete="username" />
+        <input type="password" autoComplete="current-password" />
+      </div>
       {children}
     </Modal>
   );
@@ -118,12 +124,12 @@ export function TelegramConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.tg.hint")} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="bot_token" label={t("int.tg.token")} rules={REQUIRED}>
-          <Input.Password placeholder="123456789:AAF..." />
+          <Input.Password autoComplete="new-password" placeholder="123456789:AAF..." />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -152,11 +158,12 @@ export function MetaConnectModal({
       <Form
         form={form}
         layout="vertical"
+        autoComplete="off"
         initialValues={{ login_type: "page" }}
         onFinish={(v) => connect.mutate(v)}
       >
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         {isIg && (
           <Form.Item name="login_type" label={t("int.ig.loginType")}>
@@ -172,7 +179,7 @@ export function MetaConnectModal({
         {igDirect ? (
           <>
             <Form.Item name="ig_user_id" label={t("int.ig.igUserId")} rules={REQUIRED} preserve={false}>
-              <Input />
+              <Input autoComplete="off" />
             </Form.Item>
             <Form.Item
               name="access_token"
@@ -180,13 +187,13 @@ export function MetaConnectModal({
               rules={REQUIRED}
               preserve={false}
             >
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>
         ) : (
           <>
             <Form.Item name="page_id" label={t("int.meta.pageId")} rules={REQUIRED} preserve={false}>
-              <Input />
+              <Input autoComplete="off" />
             </Form.Item>
             <Form.Item
               name="page_access_token"
@@ -194,7 +201,7 @@ export function MetaConnectModal({
               rules={REQUIRED}
               preserve={false}
             >
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>
         )}
@@ -218,18 +225,18 @@ export function LineConnectModal({
       onOk={() => form.submit()}
       loading={connect.isPending}
     >
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="channel_id" label={t("int.line.channelId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="channel_secret" label={t("int.line.channelSecret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="channel_access_token" label={t("int.line.accessToken")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -252,6 +259,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
       <Form
         form={form}
         layout="vertical"
+        autoComplete="off"
         onFinish={(v) => connect.mutate(v)}
         initialValues={{
           imap_port: 993,
@@ -270,7 +278,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
             { type: "email", message: t("auth.emailInvalid") },
           ]}
         >
-          <Input placeholder="support@example.com" />
+          <Input autoComplete="off" placeholder="support@example.com" />
         </Form.Item>
         <Form.Item name="auth_type" label={t("int.email.authType")}>
           <Segmented
@@ -283,7 +291,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
         </Form.Item>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 90px", gap: 12 }}>
           <Form.Item name="imap_host" label={t("int.email.imapHost")} rules={REQUIRED}>
-            <Input placeholder="imap.example.com" />
+            <Input autoComplete="off" placeholder="imap.example.com" />
           </Form.Item>
           <Form.Item name="imap_port" label={t("int.email.imapPort")}>
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
@@ -294,7 +302,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 90px", gap: 12 }}>
           <Form.Item name="smtp_host" label={t("int.email.smtpHost")} rules={REQUIRED}>
-            <Input placeholder="smtp.example.com" />
+            <Input autoComplete="off" placeholder="smtp.example.com" />
           </Form.Item>
           <Form.Item name="smtp_port" label={t("int.email.smtpPort")}>
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
@@ -306,10 +314,10 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
         {authType === "password" ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Form.Item name="username" label={t("int.email.username")} rules={REQUIRED}>
-              <Input />
+              <Input autoComplete="off" />
             </Form.Item>
             <Form.Item name="password" label={t("int.email.password")} rules={REQUIRED} preserve={false}>
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </div>
         ) : (
@@ -323,7 +331,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
             />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Form.Item name="username" label={t("int.email.username")} rules={REQUIRED}>
-                <Input placeholder="support@gmail.com" />
+                <Input autoComplete="off" placeholder="support@gmail.com" />
               </Form.Item>
               <Form.Item name="oauth_provider" label={t("int.email.oauthProvider")}>
                 <Select
@@ -341,14 +349,14 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
               rules={REQUIRED}
               preserve={false}
             >
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
             <Form.Item
               name="oauth_refresh_token"
               label={t("int.email.oauthRefreshToken")}
               preserve={false}
             >
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>
         )}
@@ -373,11 +381,12 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
       <Form
         form={form}
         layout="vertical"
+        autoComplete="off"
         initialValues={{ bsp: "cloud" }}
         onFinish={(v) => connect.mutate(v)}
       >
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="bsp" label={t("int.wa.bsp")}>
           <Select
@@ -391,15 +400,15 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
           />
         </Form.Item>
         <Form.Item name="phone_number_id" label={t("int.wa.phoneNumberId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         {isCloud ? (
           <>
             <Form.Item name="waba_id" label={t("int.wa.wabaId")} rules={REQUIRED} preserve={false}>
-              <Input />
+              <Input autoComplete="off" />
             </Form.Item>
             <Form.Item name="access_token" label={t("int.wa.token")} rules={REQUIRED} preserve={false}>
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>
         ) : (
@@ -412,7 +421,7 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
               style={{ marginBottom: 16 }}
             />
             <Form.Item name="api_key" label={t("int.wa.apiKey")} rules={REQUIRED} preserve={false}>
-              <Input.Password />
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>
         )}
@@ -633,15 +642,15 @@ export function SlackConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.slack.hint")} doc={DOC_LINKS.slack} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="bot_token" label={t("int.slack.botToken")} rules={REQUIRED}>
-          <Input.Password placeholder="xoxb-..." />
+          <Input.Password autoComplete="new-password" placeholder="xoxb-..." />
         </Form.Item>
         <Form.Item name="signing_secret" label={t("int.slack.signingSecret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -660,21 +669,21 @@ export function VkConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.vk.hint")} doc={DOC_LINKS.vk} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="access_token" label={t("int.vk.token")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="group_id" label={t("int.vk.groupId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="confirmation" label={t("int.vk.confirmation")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="secret" label={t("int.vk.secret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -693,21 +702,21 @@ export function WeChatKfConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.wxkf.hint")} doc={DOC_LINKS.wechat_kf} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="corp_id" label={t("int.wxkf.corpId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="secret" label={t("int.wxkf.secret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="token" label={t("int.wxkf.token")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="encoding_aes_key" label={t("int.wxkf.aesKey")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -726,24 +735,24 @@ export function WeComConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.wecom.hint")} doc={DOC_LINKS.wecom} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="corp_id" label={t("int.wecom.corpId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="agent_id" label={t("int.wecom.agentId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="secret" label={t("int.wecom.secret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="token" label={t("int.wecom.token")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="encoding_aes_key" label={t("int.wecom.aesKey")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -762,24 +771,24 @@ export function ZaloConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.zalo.hint")} doc={DOC_LINKS.zalo_app} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="oa_id" label={t("int.zalo.oaId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="app_id" label={t("int.zalo.appId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="app_secret" label={t("int.zalo.appSecret")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="access_token" label={t("int.zalo.accessToken")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="refresh_token" label={t("int.zalo.refreshToken")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -799,21 +808,21 @@ export function YouTubeConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.youtube.hint")} doc={DOC_LINKS.youtube} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Button block onClick={() => message.info(t("int.oauthPlaceholder"))} style={{ marginBottom: 16 }}>
           {t("int.youtube.goOauth")}
         </Button>
         <Form.Item name="channel_id" label={t("int.youtube.channelId")} rules={REQUIRED}>
-          <Input placeholder="UC..." />
+          <Input autoComplete="off" placeholder="UC..." />
         </Form.Item>
         <Form.Item name="access_token" label={t("int.youtube.accessToken")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="refresh_token" label={t("int.youtube.refreshToken")}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -832,15 +841,15 @@ export function TikTokBusinessConnectModal({ open, onClose }: ModalProps) {
       loading={connect.isPending}
     >
       <ConnectHint hint={t("int.tiktok.hint")} doc={DOC_LINKS.tiktok_business} />
-      <Form form={form} layout="vertical" onFinish={(v) => connect.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => connect.mutate(v)}>
         <Form.Item name="name" label={t("int.name")}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="business_id" label={t("int.tiktok.businessId")} rules={REQUIRED}>
-          <Input />
+          <Input autoComplete="off" />
         </Form.Item>
         <Form.Item name="access_token" label={t("int.tiktok.accessToken")} rules={REQUIRED}>
-          <Input.Password />
+          <Input.Password autoComplete="new-password" />
         </Form.Item>
       </Form>
     </ConnectModalShell>
@@ -860,7 +869,8 @@ export function WidgetCreateModal({ open, onClose }: ModalProps) {
       onClose();
       navigate(`/integrations/widgets/${w.id}`);
     },
-    onError: () => message.error(t("common.operationFailed")),
+    onError: (e) =>
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed")),
   });
   return (
     <Modal
@@ -873,12 +883,12 @@ export function WidgetCreateModal({ open, onClose }: ModalProps) {
       confirmLoading={create.isPending}
       destroyOnHidden
     >
-      <Form form={form} layout="vertical" onFinish={(v) => create.mutate(v)}>
+      <Form form={form} layout="vertical" autoComplete="off" onFinish={(v) => create.mutate(v)}>
         <Form.Item name="name" label={t("widget.name")} rules={REQUIRED}>
-          <Input maxLength={30} />
+          <Input autoComplete="off" maxLength={30} />
         </Form.Item>
         <Form.Item name="domain" label={t("widget.domain")}>
-          <Input placeholder="www.example.com" />
+          <Input autoComplete="off" placeholder="www.example.com" />
         </Form.Item>
       </Form>
     </Modal>

@@ -59,6 +59,10 @@ async def create_ai_member(
     """Create the member + config pair (caller commits). ai_config mirrors the
     key persona/skills/quota so P1 routing (_gather_ai_candidates reads
     ai_config.receive_enabled) keeps working."""
+    # 轉人工 keywords default only at create time — tenant edits (including an
+    # intentionally emptied list via PATCH) are never overwritten afterwards
+    if not escalation_rules.get("keywords"):
+        escalation_rules = {**escalation_rules, "keywords": ["真人", "人工", "human"]}
     member = WorkspaceMember(
         workspace_id=workspace_id,
         member_type="ai_agent",

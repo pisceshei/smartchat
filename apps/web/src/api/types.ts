@@ -490,39 +490,72 @@ export interface WebhookConfig {
 
 /* --------------------------------------------------------------- widgets */
 
-export interface WidgetPrechatConfig {
-  enabled: boolean;
-  require_name: boolean;
-  require_email: boolean;
-  require_phone: boolean;
-  message?: string | null;
+/** Widget.config JSONB canonical schema — 後端 bootstrap 原樣透傳，
+ *  管理後台讀寫巢狀 config，訪客 widget 消費。 */
+export interface WidgetBannerItem {
+  image_url: string;
+  link_url?: string;
 }
 
-export interface WidgetAppearance {
-  color: string;
-  position: "right" | "left";
-  greeting?: string | null;
-  brand_name?: string | null;
-  remove_branding: boolean;
+export interface WidgetPrechatField {
+  key: string;
+  type: "text" | "email" | "phone" | "textarea";
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  options?: string[];
 }
 
-export interface WidgetRouting {
-  flow_id?: string | null;
-  group_id?: string | null;
-  member_id?: string | null;
-  offline_lead: boolean;
+export interface WidgetConfigJson {
+  brand?: {
+    name?: string;
+    avatar_url?: string;
+    welcome_text?: string;
+  };
+  appearance?: {
+    position?: "right" | "left";
+    primary_color?: string;
+    launcher_text?: string;
+    show_branding?: boolean;
+  };
+  home?: {
+    enabled?: boolean;
+    banners?: WidgetBannerItem[];
+    reply_hint?: string;
+  };
+  pre_chat?: {
+    enabled?: boolean;
+    required_before_chat?: boolean;
+    fields?: WidgetPrechatField[];
+  };
+  offline?: {
+    email_fallback?: boolean;
+    notice?: string;
+  };
+  routing?: {
+    member_ids?: string[];
+    strategy?: string;
+    ai_agent_id?: string | null;
+  };
+  features?: {
+    file_upload?: boolean;
+    emoji?: boolean;
+  };
 }
 
+/** Flat REST serializer for GET/POST/PATCH /widgets* — settings live in the
+ *  nested `config` (never top-level appearance/prechat). */
 export interface WidgetConfig {
   id: string;
-  name: string;
   widget_key: string;
-  appearance: WidgetAppearance;
-  prechat: WidgetPrechatConfig;
-  routing: WidgetRouting;
+  name: string;
+  config: WidgetConfigJson;
   allowed_domains: string[];
-  status: "active" | "disabled";
-  created_at?: string;
+  brand_removed: boolean;
+  enabled: boolean;
+  channel_account_id?: string | null;
+  embed_script_url: string;
+  created_at?: string | null;
 }
 
 /* ------------------------------------------------------------ pagination */

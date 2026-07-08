@@ -23,7 +23,7 @@ export const CHANNEL_CATALOG: ChannelMeta[] = [
   { type: "telegram_app", name: "Telegram App", descKey: "int.channel.desc.generic", connectable: false },
   { type: "email", name: "Email", descKey: "int.channel.desc.email", connectable: true },
   { type: "line_oa", name: "LINE 官方帳號", descKey: "int.channel.desc.line_oa", connectable: true, glyph: "LN" },
-  { type: "line_app", name: "LINE App", descKey: "int.channel.desc.line_app", connectable: true, beta: true, glyph: "LN" },
+  { type: "line_app", name: "LINE App", descKey: "int.channel.desc.line_app", connectable: false, glyph: "LN" },
   { type: "youtube", name: "YouTube 評論", descKey: "int.channel.desc.youtube", connectable: true },
   { type: "tiktok_app", name: "TikTok App", descKey: "int.channel.desc.generic", connectable: false, glyph: "TT" },
   { type: "tiktok_business", name: "TikTok 商業號", descKey: "int.channel.desc.tiktok_business", connectable: true, glyph: "TT" },

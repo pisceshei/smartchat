@@ -113,6 +113,35 @@ def test_ai_none_eligible_falls_to_humans():
     assert d.handler == "member" and d.member_id == h.member_id
 
 
+def test_pick_ai_preferred_wins_when_eligible():
+    a, b = _ai(), _ai()
+    assert pick_ai([a, b], preferred_member_id=b.member_id) is b
+
+
+def test_pick_ai_preferred_ineligible_falls_back_to_first():
+    a = _ai()
+    full = _ai(max_cc=1, load=1)
+    off = _ai(receive=False)
+    assert pick_ai([a, full], preferred_member_id=full.member_id) is a
+    assert pick_ai([a, off], preferred_member_id=off.member_id) is a
+
+
+def test_pick_ai_no_preference_keeps_creation_order():
+    a, b = _ai(), _ai()
+    assert pick_ai([a, b]) is a
+
+
+def test_decide_route_honors_widget_pinned_ai():
+    a, b = _ai(), _ai()
+    d = decide_route(
+        bot_available=False,
+        ai_candidates=[a, b],
+        human_candidates=[],
+        preferred_ai_member_id=b.member_id,
+    )
+    assert d.handler == "ai_agent" and d.member_id == b.member_id
+
+
 # --------------------------------------------------------------------------
 # human eligibility + strategies
 # --------------------------------------------------------------------------

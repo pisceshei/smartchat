@@ -276,6 +276,10 @@ async def _handle_message_in(
                 conv, conv_created, conv_reopened = await _get_or_create_conversation(
                     session, acct, identity
                 )
+                # routed after commit — new, reopened AND still-unrouted open
+                # conversations all sit in 待分配 until the orchestrator runs
+                needs_routing = conv.status == "open" and conv.handler == "unassigned"
+                workspace_id, conversation_id = acct.workspace_id, conv.id
                 now = datetime.now(UTC)
                 content = MessageContent(blocks=ev.content.blocks)
                 text_plain = content.plain_text() or None
@@ -365,10 +369,43 @@ async def _handle_message_in(
                     ),
                 )
 
+    # AI/人工自動接待: an inbound message landing in an unassigned conversation
+    # kicks the routing orchestrator (①bot ②AI ③human ④待分配). Best-effort —
+    # routing must never break ingestion; route_new_inbound is idempotent
+    # (Redis NX lock + handler re-check), so duplicate kicks are no-ops.
+    if needs_routing:
+        try:
+            await _route_unassigned(session_factory, redis, workspace_id, conversation_id)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "auto-routing failed for conversation %s", conversation_id, exc_info=True
+            )
+
     # replay any statuses that referenced this (rare, but harmless)
     parked = await pop_parked(redis, account_id, ev.external_message_id)
     for status_ev in parked:
         await _handle_delivery_status(session_factory, redis, account_id, status_ev)
+
+
+async def _route_unassigned(
+    session_factory: async_sessionmaker[AsyncSession],
+    redis: aioredis.Redis,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> None:
+    """Run the routing state machine in its own transaction (route_new_inbound
+    locks the row and expects the caller to commit, then publish realtime)."""
+    from ..services import messaging, routing  # local import to avoid a cycle
+
+    async with session_factory() as session:
+        result = await routing.route_new_inbound(
+            session, redis, workspace_id=workspace_id, conversation_id=conversation_id
+        )
+        if result is None:
+            await session.rollback()
+            return
+        await session.commit()
+        await messaging.publish_realtime(result.events)
 
 
 async def _upsert_identity(
@@ -448,6 +485,8 @@ async def _get_or_create_conversation(
         )
     ).scalar_one_or_none()
     if conv is None:
+        # session_count stays 0 here — routing's ensure_open_session owns the
+        # ConversationSession row + counter (runs right after this commit)
         conv = Conversation(
             workspace_id=acct.workspace_id,
             channel_identity_id=identity.id,
@@ -456,7 +495,7 @@ async def _get_or_create_conversation(
             contact_id=identity.contact_id,
             status="open",
             handler="unassigned",
-            session_count=1,
+            session_count=0,
         )
         session.add(conv)
         await session.flush()
@@ -467,7 +506,6 @@ async def _get_or_create_conversation(
         conv.handler = "unassigned"
         conv.assignee_member_id = None
         conv.closed_at = None
-        conv.session_count = (conv.session_count or 0) + 1
         reopened = True
     # keep denorm contact pointer fresh (merges re-point identities)
     if conv.contact_id != identity.contact_id:

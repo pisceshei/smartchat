@@ -18,6 +18,7 @@ import secrets
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -122,7 +123,10 @@ async def list_accounts(
         (
             await session.execute(
                 select(ChannelAccount)
-                .where(ChannelAccount.workspace_id == member.workspace.id)
+                .where(
+                    ChannelAccount.workspace_id == member.workspace.id,
+                    ChannelAccount.enabled == True,  # noqa: E712 — soft-deleted stay hidden
+                )
                 .order_by(ChannelAccount.created_at)
             )
         )
@@ -167,16 +171,31 @@ def _normalize_connect_body(body: ConnectBody) -> tuple[dict[str, Any], dict[str
     return credentials, config
 
 
-async def _check_channel_quota(session: AsyncSession, member: MemberContext) -> None:
+async def _check_channel_quota(
+    session: AsyncSession, member: MemberContext, channel_type: str
+) -> None:
+    """Bridge channels (QR-scan hosted devices) count against hosted_devices;
+    every other non-widget channel counts against official_channels. Only
+    enabled accounts of the matching category occupy a seat."""
     limits = await effective_limits(session, get_redis(), member.workspace.id)
-    cap = limits.get("channel_accounts")
-    if cap is None:
+    is_bridge = channel_type in _BRIDGE_CHANNELS
+    cap = limits.get("hosted_devices" if is_bridge else "official_channels")
+    if cap is None or (isinstance(cap, (int, float)) and cap < 0):
         return
+    category = (
+        ChannelAccount.channel_type.in_(_BRIDGE_CHANNELS)
+        if is_bridge
+        else ChannelAccount.channel_type.notin_({*_BRIDGE_CHANNELS, "widget"})
+    )
     count = (
         await session.execute(
             select(func.count())
             .select_from(ChannelAccount)
-            .where(ChannelAccount.workspace_id == member.workspace.id)
+            .where(
+                ChannelAccount.workspace_id == member.workspace.id,
+                ChannelAccount.enabled == True,  # noqa: E712
+                category,
+            )
         )
     ).scalar_one()
     if count >= int(cap):
@@ -193,7 +212,7 @@ async def connect_account(
     channel_type = _CHANNEL_ALIASES.get(channel_type, channel_type)
     if channel_type not in _CONNECTABLE or channel_type not in registered_channel_types():
         raise HTTPException(422, f"unsupported channel type: {channel_type}")
-    await _check_channel_quota(session, member)
+    await _check_channel_quota(session, member, channel_type)
 
     # QR-scan device bridges (whatsapp_app / line_app): no token form — create the
     # account + device_bridge and start whatsmeow QR login. Returns awaiting_qr
@@ -233,6 +252,8 @@ async def connect_account(
             me = await adapter.validate_token(token)
         except ValueError as e:
             raise HTTPException(422, f"telegram: {e}") from e
+        except httpx.HTTPError as e:
+            raise HTTPException(422, f"telegram: 網路連線失敗 {e}") from e
         external_id = str(me["id"])
         name = name or (me.get("username") or f"bot {external_id}")
         health_detail = {"username": me.get("username")}
@@ -243,10 +264,39 @@ async def connect_account(
         if not credentials.get("access_token") or not config.get("phone_number_id"):
             raise HTTPException(422, "access_token and phone_number_id required")
         external_id = str(config["phone_number_id"])
-    elif channel_type in ("messenger", "instagram"):
+    elif channel_type == "messenger":
         if not credentials.get("page_access_token") or not (external_id or config.get("page_id")):
             raise HTTPException(422, "page_access_token and page_id required")
         external_id = external_id or str(config.get("page_id"))
+        # adapters read access_token; keep page_access_token as the original key too
+        if not credentials.get("access_token"):
+            credentials["access_token"] = credentials["page_access_token"]
+    elif channel_type == "instagram":
+        # Two connect modes: via-Page (page_access_token + page_id) or IG-Login
+        # (access_token + ig_user_id — the modal's login_type=ig form).
+        if credentials.get("page_access_token") and (external_id or config.get("page_id")):
+            external_id = external_id or str(config.get("page_id"))
+            if not credentials.get("access_token"):
+                credentials["access_token"] = credentials["page_access_token"]
+        elif credentials.get("access_token") and (external_id or config.get("ig_user_id")):
+            external_id = external_id or str(config.get("ig_user_id"))
+            config["ig_login"] = True  # send path: graph.instagram.com (adapter)
+        else:
+            missing = [
+                k
+                for k, v in (
+                    ("page_access_token", credentials.get("page_access_token")),
+                    ("page_id", config.get("page_id")),
+                    ("access_token", credentials.get("access_token")),
+                    ("ig_user_id", config.get("ig_user_id")),
+                )
+                if not v
+            ]
+            raise HTTPException(
+                422,
+                "instagram: provide page_access_token+page_id (via Page) or "
+                f"access_token+ig_user_id (Instagram login); missing: {', '.join(missing)}",
+            )
     elif channel_type == "line_oa":
         if not credentials.get("channel_secret") or not credentials.get("channel_access_token"):
             raise HTTPException(422, "channel_secret and channel_access_token required")
@@ -358,6 +408,14 @@ async def remove_account(
         await device_service.teardown_device(session, acct)
     acct.enabled = False
     acct.status = "disconnected"
+    # widget-type account: disable the linked Widget row too, so the widget
+    # list and the account list stay consistent (both filter enabled==true)
+    if acct.channel_type == "widget":
+        linked = (
+            await session.execute(select(Widget).where(Widget.channel_account_id == acct.id))
+        ).scalars().first()
+        if linked is not None:
+            linked.enabled = False
     session.add(
         AuditLog(
             workspace_id=member.workspace.id,
@@ -397,7 +455,10 @@ async def list_widgets(
         (
             await session.execute(
                 select(Widget)
-                .where(Widget.workspace_id == member.workspace.id)
+                .where(
+                    Widget.workspace_id == member.workspace.id,
+                    Widget.enabled == True,  # noqa: E712 — soft-deleted stay hidden
+                )
                 .order_by(Widget.created_at)
             )
         )
@@ -425,7 +486,10 @@ async def create_widget(
             await session.execute(
                 select(func.count())
                 .select_from(Widget)
-                .where(Widget.workspace_id == member.workspace.id)
+                .where(
+                    Widget.workspace_id == member.workspace.id,
+                    Widget.enabled == True,  # noqa: E712 — soft-deleted don't hold a seat
+                )
             )
         ).scalar_one()
         if count >= int(cap):
@@ -447,7 +511,7 @@ async def create_widget(
         channel_account_id=acct.id,
         widget_key=widget_key,
         name=body.name,
-        config={"brand": {"name": body.name}},
+        config={"brand": {"name": body.name}, "home": {"enabled": True}},
         allowed_domains=[body.domain] if body.domain else [],
     )
     session.add(widget)

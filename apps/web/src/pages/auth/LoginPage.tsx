@@ -17,8 +17,11 @@ export function LoginPage() {
   const onFinish = async (values: { email: string; password: string }) => {
     setLoading(true);
     try {
-      const res = await authApi.login(values);
-      setAuth(res.token, res.user, res.workspaces);
+      const res = await authApi.login({
+        email: values.email.trim().toLowerCase(),
+        password: values.password,
+      });
+      setAuth(res.token, res.user, res.workspaces, res.refreshToken);
       const from = (location.state as { from?: string } | null)?.from;
       navigate(from && from !== "/login" ? from : "/inbox", { replace: true });
     } catch {
