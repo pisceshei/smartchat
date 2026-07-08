@@ -111,6 +111,10 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
         break;
       }
       upsertMessage(qc, msg);
+      // NOTE: agent_unread_count is deliberately NOT touched here — the
+      // conversation.updated event in the same batch carries the server's
+      // authoritative count. A local +1 on top of it double-counts and makes
+      // the badge visibly jitter on every message.
       const inList = patchConversationLists(
         qc,
         msg.conversation_id,
@@ -119,8 +123,6 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
           snippet: msg.text_plain ?? c.snippet,
           last_message_at: msg.created_at,
           needs_reply: msg.direction === "in" ? true : msg.is_note ? c.needs_reply : false,
-          agent_unread_count:
-            msg.direction === "in" ? c.agent_unread_count + 1 : c.agent_unread_count,
         }),
         true,
       );
@@ -185,13 +187,11 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
     }
 
     case "unread.changed": {
-      const conversationId = (payload["conversation_id"] as string) ?? evt.conversation_id;
-      // Backend emits `unread.changed` with the key `count` (services/realtime
-      // unread.py); keep `agent_unread_count` as a legacy fallback.
-      const count = (payload["count"] ?? payload["agent_unread_count"]) as number | undefined;
-      if (conversationId && typeof count === "number") {
-        patchConversationLists(qc, conversationId, { agent_unread_count: count });
-      }
+      // Per-MEMBER realtime counter (rt_unread hash) — a different number from
+      // the conversation-level agent_unread_count shown on the list badge.
+      // Writing it into the badge made two counters fight over one field
+      // (visible flicker), so it only refreshes the sidebar totals now; the
+      // badge follows conversation.updated exclusively.
       void qc.invalidateQueries({ queryKey: ["inbox-summary"] });
       break;
     }

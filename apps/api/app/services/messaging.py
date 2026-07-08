@@ -632,7 +632,12 @@ async def advance_read_cursor(
         last_read_message_id,
     )
     events: list[Event] = []
-    if conversation.assignee_member_id == member_id and conversation.agent_unread_count:
+    # ANY member opening the conversation clears the list badge — not just the
+    # assignee. Most conversations are AI-assigned, so the old assignee-only
+    # rule meant a human reading could NEVER zero the count: the server kept
+    # pushing the stale number back on every event (the badge "flicker") and
+    # it grew without bound.
+    if conversation.agent_unread_count:
         conversation.agent_unread_count = 0
         events.append(_conversation_event(conversation, Actor(type="member", id=member_id)))
     return events
