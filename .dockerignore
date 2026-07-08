@@ -1,0 +1,17 @@
+# Keep the build context small and reproducible. node_modules and dist are
+# rebuilt inside the image; secrets never enter an image layer.
+**/node_modules
+**/dist
+**/.venv
+.venv
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.vite
+*.log
+.env
+.env.*
+!.env.example

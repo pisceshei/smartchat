@@ -69,6 +69,15 @@ services:
     command: uvicorn apps.edge.main:app --host 0.0.0.0 --port 8002
     ports: ["127.0.0.1:8002:8002"]
 
+  # Admin SPA served by nginx. The public edge (BaoTa) proxies "/" here and
+  # routes /api,/ws,/hooks,/s,/js,/widget-app to the backend containers.
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:80"]
+
   # bge-m3 embedding sidecar (P3 RAG embed tier). CPU-only; serves POST /embed
   # on :8090. Point the API/worker at it with EMBED_BASE_URL=http://embed:8090
   # (compose network); .env's localhost:8090 is for host-run dev only.
