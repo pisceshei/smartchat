@@ -1,4 +1,5 @@
-# SmartChat dev stack. Prod overrides in compose.prod.yml.
+# SmartChat stack — prod runs THIS file directly (no compose.prod.yml exists):
+#   docker compose -f infra/docker-compose.yml --env-file .env …   (never omit --env-file)
 name: smartchat
 
 x-backend: &backend

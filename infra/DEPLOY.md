@@ -1,7 +1,8 @@
 # SmartChat 生產部署手冊（寶塔伺服器 183.178.215.103 → chat.chilling.com.hk）
 
 決策：**直接切 chat.chilling.com.hk**、自用帳號**預設 Max**。
-狀態：**已部署上線 2026-07-08**（12 容器全綠、舊 Chatwoot 已停、CF→origin 正常）。
+狀態：**已部署上線 2026-07-08**（現 **14 服務**全綠——初版 12 + 修復期新增 `channel-ingress`
+與 `ai-agent`；舊 Chatwoot 已停、CF→origin 正常）。最新現狀以 `docs/PROJECT_STATE.md` 為準。
 
 ## ⚠️ 最關鍵操作紀律：所有 compose 指令都要 `--env-file .env`
 `docker compose -f infra/docker-compose.yml` 會把「專案目錄」定為 `infra/`，於是插值變數
@@ -21,6 +22,9 @@ alias dc='docker compose -f infra/docker-compose.yml --env-file .env'
 
 ## 1. 代碼上伺服器
 GitHub：`git clone https://github.com/pisceshei/smartchat.git /root/smartchat`（repo 公開期間免登入）。
+> **若把 repo 轉回 private**（建議），伺服器 `git pull` 會失效——先在伺服器配 deploy key
+> （`ssh-keygen` → GitHub repo Settings→Deploy keys，remote 改 `git@github.com:…`）或用
+> fine-grained PAT 的 https remote；開發機推送用開發者自己的 GitHub 憑證（`gh auth login`）。
 
 ## 2. 備份舊 Chatwoot（切換前必做）
 ```bash
@@ -79,7 +83,7 @@ dc build            # widget(node)→api鏡像 / web(node+nginx) / bridge-wa(Go)
 dc up -d postgres redis minio
 dc run --rm api alembic -c apps/api/alembic/alembic.ini upgrade head   # 0001→0005
 dc run --rm api python -m apps.api.app.seed                            # 4 plans
-dc up -d            # 全部 12 服務
+dc up -d            # 全部服務（現 14 個，含 channel-ingress / ai-agent）
 dc ps               # 確認全 Up；postgres+bridge-wa healthy
 ```
 構建注意：① 前端 dist 皆 gitignored，靠 Docker node 階段建（backend.Dockerfile 建 widget、web.Dockerfile 建 SPA）
@@ -110,12 +114,13 @@ dc run --rm -v /root/smartchat/apps/api/app/set_plan.py:/srv/smartchat/apps/api/
 - 重起舊容器：進 chatwoot/connector 目錄 `docker compose up -d`（數據卷未刪即分鐘級恢復）
 
 ## 驗收清單（2026-07-08）
-- [x] 12 容器全 Up；postgres+bridge-wa healthy；DB 0001→0005；4 plans
+- [x] 14 服務全 Up（含 channel-ingress/ai-agent）；postgres+bridge-wa healthy；DB 0001→0005；4 plans
 - [x] 登入頁 SPA（chat.chilling.com.hk 經 CF）
 - [x] widget loader `/js/project_*.js` 200；widget iframe `/widget-app/` 200
 - [x] API 反代（`/api/v1/*` 受 workspace scope 保護）；edge `/s/` 路由
 - [x] embed 側車產 1024 維向量（RAG 就緒）
 - [x] bridge-wa healthy（WhatsApp App 掃碼橋）
-- [ ] 用戶註冊自用帳號 → `set_plan` 升 Max（待用戶註冊）
-- [ ] 後台輸入 Telegram token / Stripe key → 真渠道收發 + 訂閱結帳（待用戶輸入憑證）
-- [ ] 收件匣三欄 / 群發 / 報表 / 流程（登入後；本機 E2E 16/16 已過）
+- [x] 用戶註冊自用帳號 cs@chilling.com.hk → `set_plan` 升 Max/720d ✓（2026-07-08）
+- [x] Telegram token 已輸入（@chilllove_bot，模擬 update 全鏈路驗證）；WhatsApp App 掃碼托管
+      +852 6657 7437 真機雙向驗證 ✓。Stripe key **尚未輸入**（訂閱結帳未驗）
+- [x] 收件匣三欄 / widget 首頁模式 / AI 接待 / 客戶頁 生產 E2E ✓；群發/報表/流程僅本機 E2E

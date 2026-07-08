@@ -28,7 +28,7 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `https://183.178.215.103:38682/xterm` (user-authorized). Also runs Odoo 19,
   the `collect` tool, Typesense (separate box), etc. — don't disturb those.
 - **Project dir**: `/root/smartchat` (git clone of `github.com/pisceshei/smartchat`, branch `main`).
-- **Stack**: Docker Compose (`infra/docker-compose.yml`), 16 services:
+- **Stack**: Docker Compose (`infra/docker-compose.yml`), **14 services**:
   postgres redis minio · api ws-gateway worker beat flow-engine **channel-ingress**
   **ai-agent** edge web · embed bridge-wa. channel-ingress = the blocking
   ingress:* stream consumer (webhook inbound lands in ms; without it inbound
@@ -99,8 +99,8 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   on a discount question → toggle visibly OFF + note), toggling 託管 back ON
   re-attaches an AI member (verified: AI resumed replying). (4) *Telegram*: dup
   check now precedes setWebhook (secret-rotation black hole), unmatched-secret
-  drops log at error level. **The production bot account is still soft-deleted —
-  user must re-add @chilllove_bot once in 渠道 (re-add now works).**
+  drops log at error level. ~~The production bot account is still soft-deleted~~
+  → **resolved in round 6**: user re-added @chilllove_bot, webhook/secret verified.
 - Minor UI nit (new): after a conversation.updated realtime patch the header
   can show 未命名訪客 while the list keeps the contact name — display-name field
   probably clobbered by a partial patch; cosmetic, refresh restores it.
@@ -154,8 +154,8 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   + LID `SenderAlt` (`apps/bridge-wa/device.go`). (b) text inbound was dropped by
   `media_refs: null` failing the `list[MediaRef]` validator; fixed on both sides
   (Go `omitempty`+non-nil slice, Python `field_validator` null→default in
-  `apps/api/app/channels/base.py`). **Final acceptance = send a real WhatsApp
-  message to the paired number and confirm it lands in the inbox with AI reply.**
+  `apps/api/app/channels/base.py`). ~~Final acceptance pending~~ → **done**: real-phone
+  WhatsApp inbound + AI reply + ✓✓ read receipts verified in prod (round 4/§4).
 - Visitor optimistic echo occasionally duplicates (pending bubble not merged with
   the server message via client_msg_id).
 - RAG **query** embedding calls sub2api `/v1/embeddings` (404) and falls back to

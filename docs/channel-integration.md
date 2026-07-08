@@ -6,6 +6,13 @@
 
 > 圖例：✅ 已實現且與官方文檔一致 · ⚠️ 有限制/半實現 · ⬜ 未實現（Phase 4）
 
+> **⚠️ 狀態更新（2026-07-08，commit `b9fac29` P4 渠道全補完）**：本文其餘部分寫於 P4 之前，
+> 下表/各節標 ⬜ 的項目**現已全部實現**——Slack、VK、微信客服+企業微信（WXBizMsgCrypt）、
+> Zalo、YouTube、TikTok 商業號、WhatsApp BSP 代理（YCloud live + 3 樁）、Email XOAUTH2
+> （Gmail/Outlook）、Instagram graph.instagram.com IG-Login 路徑。共 **17 個 adapter** 註冊
+> （`apps/api/app/channels/adapters/`）。僅 **LINE App 個人號托管橋**仍未做（前端標「即將推出」）。
+> 各節的官方協議/憑證/驗簽說明仍準確，實現狀態以代碼與 `docs/PROJECT_STATE.md` 為準。
+
 ---
 
 ## 對接方式總覽
