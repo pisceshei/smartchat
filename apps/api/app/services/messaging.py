@@ -18,6 +18,7 @@ safety net; the direct publish is the low-latency path).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ from ..models.conversations import Conversation, ConversationSession
 from ..models.messaging import File, Message
 from ..models.misc import QuickReply
 from . import quotas
+
+log = logging.getLogger("smartchat.messaging")
 
 SNIPPET_LEN = 140
 
@@ -218,6 +221,38 @@ async def publish_realtime(events: Sequence[Event]) -> None:
             conversation_id=e.conversation_id,
             channel_identity_id=identity_id,
         )
+
+
+async def dispatch_channel_sends(events: Sequence[Event]) -> None:
+    """Enqueue the outbound channel job for every freshly-created message that
+    needs real channel I/O (``requires_channel_send``). Call AFTER commit, next
+    to publish_realtime — this is the low-latency path the module docstring
+    refers to; the ``drain_pending_sends_task`` cron is the at-least-once safety
+    net. Idempotent: ``send_outbound_message`` claims each message via a Redis
+    NX guard, so a double dispatch (hot path + drain) is a harmless no-op. The
+    widget adapter's ``send`` is itself a no-op, so widget rows resolve to
+    ``sent`` without any real network call."""
+    if not events:
+        return
+    ids: list[str] = []
+    for e in events:
+        if e.type != "message.created":
+            continue
+        payload = e.payload or {}
+        if not payload.get("requires_channel_send"):
+            continue
+        mid = payload.get("message_id")
+        if mid:
+            ids.append(str(mid))
+    if not ids:
+        return
+    from ..channels.sender import enqueue_send  # lazy: avoid service↔sender cycle
+
+    for mid in ids:
+        try:
+            await enqueue_send(mid)
+        except Exception:  # noqa: BLE001 — the pending-drain cron re-picks the row
+            log.debug("hot-path enqueue_send failed for message %s", mid)
 
 
 # --------------------------------------------------------------------------

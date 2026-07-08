@@ -407,6 +407,35 @@ async def requeue_stuck_sending_task(ctx: dict[str, Any]) -> int:
 
 
 @task
+async def drain_pending_sends_task(ctx: dict[str, Any]) -> int:
+    """At-least-once outbound safety net (the transactional-outbox drain the
+    messaging docstring describes): enqueue every unclaimed 'pending' outbound
+    message. This backs the low-latency hot-path enqueue
+    (messaging.dispatch_channel_sends) so agent / AI / flow / broadcast replies
+    ALWAYS reach their channel — even if a caller never enqueued or its enqueue
+    failed. Idempotent: send_outbound_message claims each row via a Redis NX
+    guard, so re-dispatching an in-flight row is a harmless no-op."""
+    session_factory: async_sessionmaker[AsyncSession] = ctx["session_factory"]
+    redis: aioredis.Redis = ctx["redis"]
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(Message.id).where(
+                    Message.direction == "out",
+                    Message.delivery_status == "pending",
+                ).limit(500)
+            )
+        ).scalars().all()
+    dispatched = 0
+    for mid in rows:
+        if await redis.exists(claim_key(mid)):
+            continue  # a live send job already owns this row
+        await enqueue_send(mid)
+        dispatched += 1
+    return dispatched
+
+
+@task
 async def ingress_drain_task(ctx: dict[str, Any], max_batches: int = 10) -> int:
     """Bounded ingress drain — safety net when the dedicated run_ingress_loop
     process is not (yet) deployed."""
@@ -458,6 +487,10 @@ def _register_crons() -> None:
     from arq import cron
 
     register_cron(cron(ingress_drain_task, second={0, 15, 30, 45}, run_at_startup=True))
+    # outbound safety net: drain unclaimed 'pending' rows every 15s (offset from
+    # the ingress drain to spread worker load); run_at_startup flushes a backlog
+    # left by a version that never enqueued (e.g. agent/AI replies stuck pending).
+    register_cron(cron(drain_pending_sends_task, second={5, 20, 35, 50}, run_at_startup=True))
     register_cron(cron(email_poll_task, minute=set(range(60)), run_at_startup=False))
     register_cron(cron(requeue_stuck_sending_task, minute=set(range(0, 60, 2))))
 

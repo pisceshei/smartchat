@@ -724,6 +724,7 @@ async def process_event(
         if events:
             await session.commit()
             await messaging.publish_realtime(events)
+            await messaging.dispatch_channel_sends(events)
             return True
         await session.rollback()
     return False

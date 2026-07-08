@@ -517,6 +517,7 @@ async def send_reply(
         raise HTTPException(422, detail={"code": e.code, "error": e.detail}) from e
     await session.commit()
     await publish_realtime(result.events)
+    await messaging.dispatch_channel_sends(result.events)
     return MessageOut.model_validate(result.message)
 
 

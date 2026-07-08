@@ -42,7 +42,7 @@ from apps.api.app.models.flows import Flow, FlowSession, FlowTrigger, FlowVersio
 from apps.api.app.models.messaging import Message
 from apps.api.app.models.tenancy import Workspace
 from apps.api.app.services import event_bus, timers
-from apps.api.app.services.messaging import publish_realtime
+from apps.api.app.services.messaging import dispatch_channel_sends, publish_realtime
 from apps.api.app.services.redis_client import close_redis, get_redis
 
 from . import interpreter, triggers
@@ -461,6 +461,7 @@ async def _dispatch_entry(
         events = await handle_event(session_factory, redis, event)
         if events:
             await publish_realtime(events)
+            await dispatch_channel_sends(events)
         await redis.xack(stream, GROUP, entry_id)
         attempts.pop(key, None)
     except Exception:  # noqa: BLE001
