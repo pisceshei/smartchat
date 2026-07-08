@@ -18,7 +18,6 @@ WORKDIR /srv/smartchat
 COPY pyproject.toml README.md ./
 COPY packages ./packages
 COPY apps ./apps
-COPY fixtures ./fixtures
 
 RUN pip install -e ./packages/py_contracts -e .
 
