@@ -68,6 +68,17 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   human-handoff keywords (真人/人工/human) configured. zh-Hant/zh-CN/en auto-detected.
 - KB collection "商品目錄" seeded with 3 sample products (handles
   `lavender-candle`/`rose-diffuser`/`sleep-spray`).
+- **Inbound latency**: webhook → inbox in milliseconds via the `channel-ingress`
+  service (verified with a simulated Telegram update: message + AI reply landed
+  within seconds; before, everything waited on the 15s drain cron).
+- **Unread badge**: shows a stable count, zeroes when any member opens the
+  conversation, recounts from later messages (verified live, no flicker).
+- **客戶 page** (round 8, commit `bff29c7`): loads without crashing; list rows show
+  real 社媒渠道 icons / 接待成員 / 郵箱 / 最後活躍; 添加客戶 modal → POST /contacts
+  201 → row appears (verified UI + DB + api log). Filters/export contract mapped
+  (`empty→not_exists`, `tag→tag_id`, …; export downloads a CSV blob).
+- **Inbox default view**: sidebar lists **AI 成員 first** and it is the landing
+  tab (`InboxPage` defaults to `"ai"`).
 
 ## 5. Open items / known bugs (pick these up)
 - **Round 5 (2026-07-08, commit `82e074f`, E2E-verified in prod): four fixes** —
@@ -93,12 +104,24 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
 - Minor UI nit (new): after a conversation.updated realtime patch the header
   can show 未命名訪客 while the list keeps the contact name — display-name field
   probably clobbered by a partial patch; cosmetic, refresh restores it.
-- **Server is deployed from branch `fix/outbound-dispatch`** (contains main +
-  outbound-dispatch fix + bridge LID fix, all E2E-verified in prod 2026-07-08:
-  WhatsApp AI/agent replies now show ✓✓ read receipts). TODO: merge that branch
-  into `main` on GitHub (fast-forward), then on the server
-  `git checkout main && git pull origin main` so future deploys pull main again.
-  One stale test message remains `delivery_status=failed` (exhausted retries
+- **Rounds 6-8 (2026-07-08, all deployed + E2E-verified in prod)**:
+  (6) `c219816` — inbound was 10-15s late because the only ingress consumer was
+  the 15s drain cron; added the dedicated **`channel-ingress`** compose service
+  (blocking `run_ingress_loop`, entrypoint
+  `apps/api/app/channels/ingress_consumer.py`). Also fixed the Telegram connect
+  black hole (dup-409 check now precedes setWebhook so a rotated secret can't be
+  half-persisted) — user re-added @chilllove_bot, webhook/secret verified, full
+  chain proven with a simulated update. Remaining: a real-phone message to
+  @chilllove_bot as final acceptance.
+  (7) `9154ed2` — unread badge flickered and could never clear: three writers
+  fought over the count and only the assignee's read zeroed it. Now
+  `conversation.updated` is the single authority and `advance_read_cursor`
+  zeroes `agent_unread_count` for ANY member.
+  (8) `bff29c7` — 客戶 page crash + enrichment + AI-default view (see §4).
+  Contract regression test: `apps/api/tests/contacts/test_query_contract.py`.
+- `fix/outbound-dispatch` is **merged into `main`**; the server is back on the
+  standard main-pull deploy flow.
+- One stale test message remains `delivery_status=failed` (exhausted retries
   before the bridge fix); requeue with
   `UPDATE messages SET delivery_status='pending', delivery_error=NULL WHERE delivery_status='failed' AND delivery_error='RETRYABLE';`
   if you want it delivered — the drain cron picks it up.
@@ -140,8 +163,12 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
 - Widget home banners use picsum placeholders — user to set real images (admin →
   聊天外掛 → edit → 首頁模式). Sample KB products to be replaced with real ones
   (future: a Fecify→KB product sync).
-- Telegram/WhatsApp inbound → inbox with the right channel icon is code-complete;
-  final validation needs the user's phone.
+- Telegram/WhatsApp inbound → inbox with the right channel icon: WhatsApp
+  verified with real phones; Telegram verified via simulated update — final
+  validation needs the user's phone (message @chilllove_bot after START).
+- A test contact 測試新客戶王小明 (`wang@test.com`) was created during the round-8
+  add-customer verification and left in place (like the earlier `tester` row) —
+  delete from the UI if unwanted.
 
 ## 6. Gotcha log (incidents → fixes; prevents repeating them)
 - **compose interpolation**: `-f infra/…` without `--env-file .env` → default
@@ -193,7 +220,9 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   and background them, then poll (`nohup … > _build.log 2>&1 &`).
 
 ## 7. Commit history anchors (recent)
-`ed250d9` outbound-dispatch fix (branch `fix/outbound-dispatch`) · `694b8f8`
+`bff29c7` customers crash+enrichment + AI-default inbox view · `9154ed2` unread
+badge single-authority · `c219816` channel-ingress service + telegram connect
+order · `ed250d9` outbound-dispatch fix (merged to main) · `694b8f8`
 worker channel-I/O crons import · `9d18109` prod frontend builds · `956647e` drop
 dead COPY fixtures · `f6d80b5` embed torch 2.6 · `44b070c` deploy runbook ·
 `6306b75` channel+widget+AI+home-mode fixes · `116e0ca` AI consumer actor
