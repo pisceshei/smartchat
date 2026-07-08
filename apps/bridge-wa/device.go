@@ -73,6 +73,12 @@ func newDevice(mgr *Manager, id string, st *store.Device, callbackURL, callbackS
 func (d *Device) start() error {
 	client := whatsmeow.NewClient(d.store, d.mgr.waLog.Sub(shortID(d.id)))
 	client.EnableAutoReconnect = true
+	// Recover undecryptable inbound: the first message to a freshly-paired
+	// device (and any later Signal-session gap) arrives before this device has
+	// the sender's session, so whatsmeow logs "Unavailable message" and no
+	// events.Message fires. This asks the user's primary phone to resend those
+	// messages, which then decrypt and reach the inbox normally.
+	client.AutomaticMessageRerequestFromPhone = true
 	client.AddEventHandler(d.onEvent)
 	d.mu.Lock()
 	d.client = client
@@ -178,6 +184,13 @@ func (d *Device) onEvent(evt any) {
 	switch e := evt.(type) {
 	case *events.Message:
 		d.enqueue(func() { d.handleMessage(e) })
+	case *events.UndecryptableMessage:
+		// whatsmeow couldn't decrypt this (cold Signal session, usually the
+		// first message after pairing). With AutomaticMessageRerequestFromPhone
+		// the phone resends it and a normal events.Message follows. Log for
+		// visibility so a persistent decrypt failure is diagnosable.
+		d.mgr.log.Warnf("device %s undecryptable from %s (unavailable=%v type=%v) — rerequesting from phone",
+			d.id, e.Info.Sender.String(), e.IsUnavailable, e.UnavailableType)
 	case *events.Receipt:
 		d.enqueue(func() { d.handleReceipt(e) })
 	case *events.Connected:
@@ -270,13 +283,21 @@ func (d *Device) handleMessage(e *events.Message) {
 		return // unsupported message type (reaction, poll, protocol, …)
 	}
 
+	// LID addressing: WhatsApp now identifies some senders by a @lid privacy id
+	// instead of their phone JID. SenderAlt carries the real phone JID — use it
+	// so the contact's external id / phone are the phone number, not the LID.
+	sender := info.Sender
+	if info.AddressingMode == types.AddressingModeLID && !info.SenderAlt.IsEmpty() {
+		sender = info.SenderAlt
+	}
+
 	ev := messageInEvent{
 		Kind:              "message_in",
 		ExternalMessageID: string(info.ID),
-		ExternalUserID:    info.Sender.User,
+		ExternalUserID:    sender.User,
 		Content:           messageContent{Blocks: blocks},
 		ExternalTimestamp: info.Timestamp.UTC().Format(time.RFC3339),
-		Profile:           profileHint{DisplayName: info.PushName, Phone: "+" + info.Sender.User},
+		Profile:           profileHint{DisplayName: info.PushName, Phone: "+" + sender.User},
 		MediaRefs:         refs,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
