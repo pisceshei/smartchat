@@ -21,9 +21,11 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /srv/embed
 
 # CPU-only torch wheel keeps the image lean (no CUDA runtime).
+# torch>=2.6 required: newer transformers block torch.load on <2.6 for
+# CVE-2025-32434, which bge-m3's checkpoint load hits at build time.
 RUN pip install \
         --extra-index-url https://download.pytorch.org/whl/cpu \
-        "torch==2.4.1" \
+        "torch==2.6.0" \
         "sentence-transformers==3.1.1" \
         "fastapi>=0.115" \
         "uvicorn[standard]>=0.30" \
