@@ -147,3 +147,36 @@ def test_get_bridge_client_reads_settings(monkeypatch) -> None:
     assert client.base_url == "http://x:9000"  # trailing slash trimmed
     assert client.token == "tok"
     assert client.enabled is True
+
+
+async def test_resolve_ids_contract() -> None:
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["method"] = req.method
+        seen["auth"] = req.headers.get("X-Bridge-Auth")
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "results": {
+                    "56985642876983": {
+                        "kind": "lid", "pn": "85266577437", "lid": "56985642876983",
+                    },
+                    "85298765432": {"kind": "pn", "pn": "85298765432", "lid": "111"},
+                    "42": {"kind": "unknown"},
+                },
+            },
+        )
+
+    client = _client(handler)
+    res = await client.resolve_ids("d1", ["56985642876983", "85298765432", "42"])
+    assert seen["url"] == f"{BASE}/devices/d1/resolve"
+    assert seen["method"] == "POST"
+    assert seen["auth"] == TOKEN
+    assert seen["body"] == {"ids": ["56985642876983", "85298765432", "42"]}
+    assert res["results"]["56985642876983"]["kind"] == "lid"
+    assert res["results"]["56985642876983"]["pn"] == "85266577437"
+    assert res["results"]["42"] == {"kind": "unknown"}

@@ -258,22 +258,32 @@ async function resyncHistory(): Promise<void> {
 
 let agentTypingTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Prefer the nested `message`; otherwise rebuild from the flat event fields
- *  the backend messaging service publishes (message_id/sender_type/content). */
-function messageFromPayload(payload: Record<string, unknown>): WireMessage | undefined {
+/** Prefer the nested `message`; otherwise rebuild from the flat event fields.
+ *  Visitor frames are whitelist-filtered by the gateway (id/content/text_plain/
+ *  created_at/sender_type/… — NOT message_id or the nested message), so the
+ *  flat `id` key is the one that matters here. When content is missing,
+ *  synthesize a text block from text_plain rather than dropping the frame.
+ *  Exported for tests. */
+export function messageFromPayload(payload: Record<string, unknown>): WireMessage | undefined {
   const nested = payload["message"] as WireMessage | undefined;
   if (nested && nested.id) return nested;
-  const id = payload["message_id"] as string | undefined;
-  const content = payload["content"] as WireMessage["content"] | undefined;
-  if (!id || !content) return undefined;
+  const id = (payload["id"] ?? payload["message_id"]) as string | undefined;
+  if (!id) return undefined;
   if (payload["is_note"] === true) return undefined; // internal notes stay agent-only
+  let content = payload["content"] as WireMessage["content"] | undefined;
+  if (!content) {
+    const text = payload["text_plain"];
+    if (typeof text !== "string" || !text) return undefined;
+    content = { blocks: [{ kind: "text", text }] };
+  }
   return {
     id,
     conversation_id: (payload["conversation_id"] as string | null) ?? null,
     sender_type: (payload["sender_type"] as WireMessage["sender_type"]) ?? "member",
+    sender_name: (payload["sender_name"] as string | null) ?? null,
     content,
     client_msg_id: (payload["client_msg_id"] as string | null) ?? null,
-    created_at: new Date().toISOString(),
+    created_at: (payload["created_at"] as string) ?? new Date().toISOString(),
     delivery_status:
       (payload["delivery_status"] as WireMessage["delivery_status"]) ?? null,
   };
@@ -298,7 +308,15 @@ function handleEvent(_seq: number, event: WidgetEvent): void {
     }
     case "message.updated": {
       const m = messageFromPayload(event.payload);
-      if (m) upsertMessage(m as UiMessage);
+      if (m) {
+        upsertMessage(m as UiMessage);
+        break;
+      }
+      // partial update (e.g. a delivery-status tick with no body) — patch
+      // just the status instead of dropping the frame
+      const id = (event.payload["id"] ?? event.payload["message_id"]) as string | undefined;
+      const ds = event.payload["delivery_status"] as UiMessage["delivery_status"] | undefined;
+      if (id && ds) markMessage(id, { delivery_status: ds });
       break;
     }
     case "typing": {

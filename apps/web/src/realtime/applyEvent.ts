@@ -67,17 +67,30 @@ function patchConversationLists(
 }
 
 /** Prefer the nested full row; otherwise rebuild a usable Message from the
- *  flat event fields (message_id/direction/content/...). Payload-shape drift
- *  must degrade to invalidation, never to a silently frozen inbox. */
-function messageFromEvent(evt: WsEnvelope): Message | undefined {
+ *  flat event fields (message_id/direction/content/...). `complete: false`
+ *  marks a body synthesized from text_plain (the gateway slims top-level
+ *  content off frames for non-open conversations) — the caller must refetch
+ *  so rich blocks (product cards, media) reconcile. A payload with NO usable
+ *  body returns undefined — NEVER a fabricated empty-blocks message: that is
+ *  exactly the "empty bubble until refresh" bug. Payload-shape drift must
+ *  degrade to invalidation, never to a silently frozen inbox. */
+function messageFromEvent(evt: WsEnvelope): { msg: Message; complete: boolean } | undefined {
   const payload = evt.payload ?? {};
   const nested = payload["message"] as Message | undefined;
-  if (nested?.id && nested.conversation_id) return nested;
-  const id = payload["message_id"] as string | undefined;
+  if (nested?.id && nested.conversation_id) return { msg: nested, complete: true };
+  const id = (payload["message_id"] ?? payload["id"]) as string | undefined;
   const conversationId =
     (payload["conversation_id"] as string | undefined) ?? evt.conversation_id ?? undefined;
   if (!id || !conversationId) return undefined;
-  return {
+  let content = payload["content"] as Message["content"] | undefined;
+  let complete = true;
+  if (!content) {
+    const text = payload["text_plain"];
+    if (typeof text !== "string" || !text) return undefined;
+    content = { blocks: [{ kind: "text", text }] } as Message["content"];
+    complete = false;
+  }
+  const msg = {
     id,
     conversation_id: conversationId,
     channel_identity_id: (payload["channel_identity_id"] as string | null) ?? null,
@@ -85,13 +98,40 @@ function messageFromEvent(evt: WsEnvelope): Message | undefined {
     sender_type: (payload["sender_type"] as string) ?? "",
     sender_id: (payload["sender_id"] as string | null) ?? null,
     msg_type: (payload["msg_type"] as string) ?? "text",
-    content: (payload["content"] as Message["content"]) ?? { blocks: [] },
+    content,
     text_plain: (payload["text_plain"] as string | null) ?? null,
     is_note: payload["is_note"] === true,
     client_msg_id: (payload["client_msg_id"] as string | null) ?? null,
     delivery_status: (payload["delivery_status"] as string | null) ?? null,
-    created_at: (evt.ts as string) ?? new Date().toISOString(),
+    created_at:
+      (payload["created_at"] as string) ?? (evt.ts as string) ?? new Date().toISOString(),
   } as unknown as Message;
+  return { msg, complete };
+}
+
+/** Merge a partial patch into ONE cached message. Returns false only when the
+ *  thread cache exists but the row is missing (caller should invalidate); an
+ *  uncached thread returns true — the REST fetch on open is authoritative. */
+function patchMessage(
+  qc: QueryClient,
+  conversationId: string,
+  messageId: string,
+  patch: Partial<Message>,
+): boolean {
+  const key = ["messages", conversationId];
+  const existing = qc.getQueryData<MsgPages>(key);
+  if (!existing) return true;
+  let found = false;
+  const pages = existing.pages.map((page) => ({
+    ...page,
+    items: page.items.map((m) => {
+      if (m.id !== messageId) return m;
+      found = true;
+      return { ...m, ...patch };
+    }),
+  }));
+  if (found) qc.setQueryData<MsgPages>(key, { ...existing, pages });
+  return found;
 }
 
 export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
@@ -100,8 +140,8 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
 
   switch (evt.type) {
     case "message.created": {
-      const msg = messageFromEvent(evt);
-      if (!msg) {
+      const result = messageFromEvent(evt);
+      if (!result) {
         // shape we don't understand — refetch rather than freeze
         void qc.invalidateQueries({ queryKey: ["conversations"] });
         if (evt.conversation_id) {
@@ -110,7 +150,13 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
         void qc.invalidateQueries({ queryKey: ["inbox-summary"] });
         break;
       }
+      const { msg, complete } = result;
       upsertMessage(qc, msg);
+      if (!complete) {
+        // body was synthesized from text_plain — refetch so rich blocks
+        // (product cards, media) replace the plain-text stand-in
+        void qc.invalidateQueries({ queryKey: ["messages", msg.conversation_id] });
+      }
       // NOTE: agent_unread_count is deliberately NOT touched here — the
       // conversation.updated event in the same batch carries the server's
       // authoritative count. A local +1 on top of it double-counts and makes
@@ -134,10 +180,43 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
     }
 
     case "message.updated": {
-      const msg = messageFromEvent(evt);
-      if (msg) upsertMessage(qc, msg);
-      else if (evt.conversation_id) {
-        void qc.invalidateQueries({ queryKey: ["messages", evt.conversation_id] });
+      // PATCH-ONLY: delivery-status ticks and translate updates carry partial
+      // payloads. Rebuilding a full row here (the old behavior) spread an
+      // empty-blocks body over the cached message and blanked the bubble on
+      // every tick advance. Apply only the keys that are present.
+      const nested = payload["message"] as Message | undefined;
+      if (nested?.id && nested.conversation_id) {
+        upsertMessage(qc, nested);
+        break;
+      }
+      const msgId = (payload["message_id"] ?? payload["id"]) as string | undefined;
+      const convId =
+        (payload["conversation_id"] as string | undefined) ?? evt.conversation_id ?? undefined;
+      if (!msgId || !convId) {
+        // e.g. bulk read-watermark updates carry no message_id — refetch
+        if (evt.conversation_id) {
+          void qc.invalidateQueries({ queryKey: ["messages", evt.conversation_id] });
+        }
+        break;
+      }
+      const patch: Partial<Message> = {};
+      const patchable = [
+        "delivery_status", "content", "text_plain", "translations", "msg_type",
+      ] as const;
+      for (const k of patchable) {
+        if (k in payload) (patch as Record<string, unknown>)[k] = payload[k];
+      }
+      if (Object.keys(patch).length === 0) {
+        // an update frame with no renderable keys still signals a change the
+        // gateway slimmed away (content/translations are stripped for
+        // non-open conversations, and the SPA never sends focus frames) —
+        // refetch rather than silently dropping it. Delivery ticks always
+        // carry delivery_status, so they never take this branch.
+        void qc.invalidateQueries({ queryKey: ["messages", convId] });
+        break;
+      }
+      if (!patchMessage(qc, convId, msgId, patch)) {
+        void qc.invalidateQueries({ queryKey: ["messages", convId] }); // miss → refetch, never freeze
       }
       break;
     }

@@ -10,6 +10,7 @@ This client speaks the BRIDGE HTTP CONTRACT exactly:
     GET    /devices/{device_id}/qr        -> {qr, status}
     GET    /devices/{device_id}/health    -> {status, jid?, phone?, pushname?}
     POST   /devices/{device_id}/send      {to, payload} -> {ok, message_id}
+    POST   /devices/{device_id}/resolve   {ids: [...]} -> {ok, results: {id: {kind, pn?, lid?}}}
     POST   /devices/{device_id}/logout    -> {ok}
     DELETE /devices/{device_id}           -> {ok}
 
@@ -128,6 +129,14 @@ class BridgeClient:
         """Send a rendered ``{blocks:[...]}`` payload to ``to`` (E.164 or JID)."""
         return await self._request(
             "POST", f"/devices/{device_id}/send", json={"to": to, "payload": payload}
+        )
+
+    async def resolve_ids(self, device_id: str, ids: list[str]) -> dict[str, Any]:
+        """Classify bare digit ids via the device's local whatsmeow lid↔phone
+        store (max 500 per call, no usync): returns
+        ``{ok, results: {id: {kind: "lid"|"pn"|"unknown", pn?, lid?}}}``."""
+        return await self._request(
+            "POST", f"/devices/{device_id}/resolve", json={"ids": ids}
         )
 
     async def logout(self, device_id: str) -> dict[str, Any]:

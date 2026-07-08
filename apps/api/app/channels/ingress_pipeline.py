@@ -273,7 +273,14 @@ async def _handle_message_in(
                     if getattr(block, "size", None) in (None, 0):
                         block.size = len(got.data)  # type: ignore[union-attr]
 
-                identity, contact, contact_created = await _upsert_identity(session, acct, ev)
+                (
+                    identity,
+                    contact,
+                    contact_created,
+                    heal_events,
+                    pending_merge,
+                ) = await _upsert_identity(session, acct, ev)
+                rt_events += heal_events
                 conv, conv_created, conv_reopened = await _get_or_create_conversation(
                     session, acct, identity
                 )
@@ -357,6 +364,12 @@ async def _handle_message_in(
                     type="message.created",
                     actor=Actor(type="contact", id=contact.id),
                     payload={
+                        # flat id/content deliberately NOT added here: the
+                        # visitor's own echo must stay undeliverable to the
+                        # widget (ingress rows have no client_msg_id, so the
+                        # widget could not merge the echo with its optimistic
+                        # bubble → duplicates). Agents render from the nested
+                        # row, which survives the gateway's body slimming.
                         "message_id": str(msg.id),
                         "conversation_id": str(conv.id),
                         "direction": "in",
@@ -366,22 +379,7 @@ async def _handle_message_in(
                         "external_message_id": ev.external_message_id,
                         "channel_identity_id": str(identity.id),
                         "is_note": False,
-                        # full row so live clients append to the open thread
-                        # without a refetch
-                        "message": {
-                            "id": str(msg.id),
-                            "conversation_id": str(conv.id),
-                            "channel_identity_id": str(identity.id),
-                            "direction": "in",
-                            "sender_type": "contact",
-                            "sender_id": str(contact.id),
-                            "msg_type": msg.msg_type,
-                            "content": msg.content,
-                            "text_plain": msg.text_plain,
-                            "is_note": False,
-                            "delivery_status": msg.delivery_status,
-                            "created_at": now.isoformat(),
-                        },
+                        "message": messaging.message_row_payload(msg, created_at=now),
                     },
                     **base_kwargs,
                 )
@@ -399,6 +397,20 @@ async def _handle_message_in(
                 "realtime publish failed for conversation %s", conversation_id,
                 exc_info=True,
             )
+
+        # a duplicate lid/phone contact pair discovered during the upsert is
+        # merged AFTER the message transaction committed, in its own short
+        # transaction — a merge failure/deadlock must never take the customer's
+        # message down with it (the next inbound retries the merge anyway).
+        if pending_merge is not None:
+            try:
+                merge_events = await _merge_lid_duplicate(session_factory, **pending_merge)
+                if merge_events:
+                    await messaging.publish_realtime(merge_events)
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "wa-lid contact merge failed (retried on next inbound)", exc_info=True
+                )
 
     # AI/人工自動接待: an inbound message landing in an unassigned conversation
     # kicks the routing orchestrator (①bot ②AI ③human ④待分配). Best-effort —
@@ -439,10 +451,109 @@ async def _route_unassigned(
         await messaging.publish_realtime(result.events)
 
 
+def _wa_lid_from_event(ev: MessageIn) -> str | None:
+    """The WhatsApp lid privacy id the bridge attaches as meta.lid."""
+    lid = (ev.meta or {}).get("lid")
+    if not isinstance(lid, str):
+        return None
+    lid = lid.strip()
+    return lid or None
+
+
+def _is_lid_placeholder_phone(phone: str | None, lid: str | None) -> bool:
+    """The known-bad shape written before the wa-lid fix: the lid digits
+    masquerading as a phone ("+<lid>"). ONLY this exact shape is ever
+    overwritten/cleared — a real phone is never touched."""
+    return bool(phone and lid and phone == f"+{lid}")
+
+
+def _clean_hint_phone(phone: str | None, lid: str | None) -> str | None:
+    """Never accept "+<lid>" as a phone value. Only effective when the lid is
+    actually KNOWN — from the event's meta.lid (new bridge) or the identity's
+    remembered meta.wa_lid (update path). An old bridge sends the fake phone
+    WITHOUT the lid, so for brand-new senders during a staggered rollout the
+    placeholder can still slip in on the create path; it self-heals on the
+    sender's next message after the bridge upgrade, or via the backfill —
+    deploy bridge-wa together with (or before) the api and run the backfill
+    after."""
+    return None if _is_lid_placeholder_phone(phone, lid) else (phone or None)
+
+
+async def _merge_lid_duplicate(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    workspace_id: uuid.UUID,
+    target_id: uuid.UUID,
+    source_id: uuid.UUID,
+    lid: str,
+) -> list[Event]:
+    """Merge a lid-keyed duplicate contact into the phone-keyed one, in its
+    OWN transaction (never inside the message-ingest one). Locks both contacts
+    in merge_contacts' canonical order BEFORE clearing the "+<lid>" placeholder
+    phone, so the pre-mutation can never invert the lock order via autoflush
+    against a concurrent UI merge, and the already-merged check reads
+    post-lock row state. Returns the realtime events to publish (empty on
+    skip)."""
+    from ..modules.contacts.service import (  # local: cycle-safe
+        MergeError,
+        merge_contacts,
+        ordered_pair,
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            first, second = ordered_pair(target_id, source_id)
+            rows: dict[uuid.UUID, Contact] = {}
+            for cid in (first, second):
+                row = (
+                    await session.execute(
+                        select(Contact)
+                        .where(Contact.id == cid, Contact.workspace_id == workspace_id)
+                        .with_for_update()
+                    )
+                ).scalars().first()
+                if row is None:
+                    return []
+                rows[cid] = row
+            source = rows[source_id]
+            if source.merged_into_id is not None:
+                return []  # already merged by a concurrent actor
+            if _is_lid_placeholder_phone(source.phone, lid):
+                source.phone = None  # the fake phone must not win fill-missing
+            try:
+                _, merge_events = await merge_contacts(
+                    session,
+                    workspace_id=workspace_id,
+                    target_id=target_id,
+                    source_id=source_id,
+                    actor_member_id=None,
+                )
+            except MergeError:
+                log.warning("wa-lid merge skipped for lid %s", lid, exc_info=True)
+                return []
+            log.info(
+                "wa-lid merge: contact %s (lid %s) merged into %s", source_id, lid, target_id
+            )
+    return merge_events
+
+
 async def _upsert_identity(
     session: AsyncSession, acct: ChannelAccount, ev: MessageIn
-) -> tuple[ChannelIdentity, Contact, bool]:
+) -> tuple[ChannelIdentity, Contact, bool, list[Event], dict[str, Any] | None]:
+    """Identity/contact upsert keyed by (channel_account_id, external_user_id),
+    plus WhatsApp lid reconciliation: a sender first seen under an unresolved
+    @lid privacy id is re-keyed (same row, same contact) once the real phone
+    surfaces; a genuine duplicate (separate lid- and phone-keyed identities)
+    is reported back as a pending contact-merge for the caller to run AFTER
+    commit. Returns (identity, contact, contact_created,
+    heal_events-to-publish, pending_merge-kwargs-or-None)."""
     now = datetime.now(UTC)
+    heal_events: list[Event] = []
+    pending_merge: dict[str, Any] | None = None
+    hint = ev.profile
+    lid = _wa_lid_from_event(ev)
+    hint_phone = _clean_hint_phone(hint.phone, lid)
+
     identity = (
         await session.execute(
             select(ChannelIdentity).where(
@@ -451,14 +562,58 @@ async def _upsert_identity(
             )
         )
     ).scalar_one_or_none()
-    hint = ev.profile
+
+    if lid and lid != ev.external_user_id:
+        # the event is phone-keyed AND names the sender's lid — look for an
+        # identity still keyed by that lid (created while the phone was unknown)
+        lid_identity = (
+            await session.execute(
+                select(ChannelIdentity).where(
+                    ChannelIdentity.channel_account_id == acct.id,
+                    ChannelIdentity.external_user_id == lid,
+                )
+            )
+        ).scalar_one_or_none()
+        if lid_identity is not None:
+            if identity is None:
+                # heal: re-key the lid identity to the real phone digits in
+                # place — same identity row, same contact, no duplicate.
+                lid_identity.external_user_id = ev.external_user_id
+                lid_identity.meta = {**(lid_identity.meta or {}), "wa_lid": lid}
+                identity = lid_identity
+                log.info(
+                    "wa-lid heal: identity %s re-keyed %s -> %s",
+                    lid_identity.id,
+                    lid,
+                    ev.external_user_id,
+                )
+            elif lid_identity.id != identity.id:
+                # duplicate person: phone-keyed AND lid-keyed identities exist.
+                # Identities are never merged (conversations are 1:1 with
+                # them); the CONTACTS get merged instead (lid contact → phone
+                # one) — but NOT here: merge_contacts takes ordered FOR UPDATE
+                # locks, and running it inside the ingest transaction (with a
+                # pre-mutated source row pending autoflush) can invert the
+                # canonical lock order against a concurrent UI merge and
+                # deadlock — taking the customer's message down with it. The
+                # caller runs the merge AFTER this transaction commits, in its
+                # own short transaction (see _merge_lid_duplicate).
+                lid_identity.meta = {**(lid_identity.meta or {}), "wa_lid": lid}
+                if lid_identity.contact_id != identity.contact_id:
+                    pending_merge = {
+                        "workspace_id": acct.workspace_id,
+                        "target_id": identity.contact_id,
+                        "source_id": lid_identity.contact_id,
+                        "lid": lid,
+                    }
+
     if identity is None:
         contact = Contact(
             workspace_id=acct.workspace_id,
             display_name=hint.display_name or ev.external_user_id,
             avatar_url=hint.avatar_url,
             email=hint.email,
-            phone=hint.phone,
+            phone=hint_phone,
             language=hint.language,
             country=hint.country,
             first_seen_at=now,
@@ -474,17 +629,21 @@ async def _upsert_identity(
             contact_id=contact.id,
             display_name=hint.display_name,
             avatar_url=hint.avatar_url,
-            meta=hint.meta or {},
+            # plain JSONB (no MutableDict) — always assign whole dicts
+            meta={**(hint.meta or {}), **({"wa_lid": lid} if lid else {})},
             last_seen_at=now,
         )
         session.add(identity)
         await session.flush()
-        return identity, contact, True
+        return identity, contact, True, heal_events, pending_merge
+
     identity.last_seen_at = now
     if hint.display_name and identity.display_name != hint.display_name:
         identity.display_name = hint.display_name
     if hint.avatar_url:
         identity.avatar_url = hint.avatar_url
+    if lid and (identity.meta or {}).get("wa_lid") != lid:
+        identity.meta = {**(identity.meta or {}), "wa_lid": lid}
     contact = await session.get(Contact, identity.contact_id)
     if contact is None:  # should not happen; heal
         contact = Contact(
@@ -496,15 +655,44 @@ async def _upsert_identity(
         await session.flush()
         identity.contact_id = contact.id
     contact.last_seen_at = now
-    if hint.display_name and not contact.display_name:
-        contact.display_name = hint.display_name
+    known_lid = (identity.meta or {}).get("wa_lid") or lid
+    # re-clean with the identity's remembered lid: an OLD bridge event carries
+    # the "+<lid>" fake phone but no meta.lid — once this identity has ever
+    # been annotated (new bridge / backfill), that fake phone is recognized
+    # and rejected here, so a healed/cleared contact cannot be re-poisoned
+    # during a staggered rollout.
+    hint_phone = _clean_hint_phone(hint.phone, known_lid)
+    changed: dict[str, Any] = {}
+    if hint.display_name and (
+        not contact.display_name
+        or (known_lid and contact.display_name in (known_lid, f"+{known_lid}"))
+    ):
+        if contact.display_name != hint.display_name:
+            contact.display_name = hint.display_name
+            changed["display_name"] = hint.display_name
     if hint.email and not contact.email:
         contact.email = hint.email
-    if hint.phone and not contact.phone:
-        contact.phone = hint.phone
+    # phone: fill-if-empty as before, PLUS overwrite the known-bad "+<lid>"
+    # placeholder once the real number is known. Real phones are never replaced.
+    if hint_phone and (not contact.phone or _is_lid_placeholder_phone(contact.phone, known_lid)):
+        if contact.phone != hint_phone:
+            contact.phone = hint_phone
+            changed["phone"] = hint_phone
     if hint.language and not contact.language:
         contact.language = hint.language
-    return identity, contact, False
+    if changed:
+        ev_heal = Event(
+            workspace_id=acct.workspace_id,
+            type="contact.updated",
+            actor=Actor(type="system"),
+            contact_id=contact.id,
+            channel_type=acct.channel_type,
+            channel_account_id=acct.id,
+            payload={"contact_id": str(contact.id), "changed": changed},
+        )
+        await event_bus.emit(session, ev_heal)
+        heal_events.append(ev_heal)
+    return identity, contact, False, heal_events, pending_merge
 
 
 async def _get_or_create_conversation(
@@ -550,6 +738,7 @@ async def _handle_delivery_status(
     account_id: uuid.UUID,
     ev: DeliveryStatus,
 ) -> None:
+    ev_out: Event | None = None
     async with session_factory() as session:
         async with session.begin():
             acct = await session.get(ChannelAccount, account_id)
@@ -559,7 +748,16 @@ async def _handle_delivery_status(
             if dedup is None or dedup.message_id is None:
                 await park_status(redis, account_id, ev)
                 return
-            await apply_delivery_status(session, acct, dedup.message_id, ev)
+            ev_out = await apply_delivery_status(session, acct, dedup.message_id, ev)
+    # low-latency tick advance (pending→sent→delivered→read) for live agents;
+    # best effort — the outbox emit above is the durable path.
+    if ev_out is not None:
+        from ..services import messaging  # local import to avoid a cycle
+
+        try:
+            await messaging.publish_realtime([ev_out])
+        except Exception:  # noqa: BLE001
+            log.warning("realtime publish failed for delivery status", exc_info=True)
 
 
 async def apply_delivery_status(
@@ -567,34 +765,31 @@ async def apply_delivery_status(
     acct: ChannelAccount,
     message_id: uuid.UUID,
     ev: DeliveryStatus,
-) -> bool:
+) -> Event | None:
+    """Advance one message's delivery_status. Emits the message.updated to the
+    outbox in the caller's transaction and RETURNS it so the caller can
+    publish_realtime after commit (None = no-op / cannot advance)."""
+    from ..services import messaging  # local import to avoid a cycle
+
     msg = (
         await session.execute(select(Message).where(Message.id == message_id))
     ).scalar_one_or_none()
     if msg is None:
-        return False
+        return None
     if not status_can_advance(msg.delivery_status, ev.status):
-        return False
+        return None
     msg.delivery_status = ev.status
     if ev.status == "failed":
         msg.delivery_error = ev.error_code or ev.error_message or "failed"
-    await event_bus.emit(
-        session,
-        Event(
-            workspace_id=acct.workspace_id,
-            type="message.updated",
-            actor=Actor(type="system"),
-            conversation_id=msg.conversation_id,
-            channel_type=acct.channel_type,
-            channel_account_id=acct.id,
-            payload={
-                "message_id": str(msg.id),
-                "delivery_status": ev.status,
-                "error_code": ev.error_code,
-            },
-        ),
+    ev_out = messaging.delivery_status_event(
+        msg,
+        status=ev.status,
+        error_code=(ev.error_code or ev.error_message) if ev.status == "failed" else ev.error_code,
+        channel_type=acct.channel_type,
+        channel_account_id=acct.id,
     )
-    return True
+    await event_bus.emit(session, ev_out)
+    return ev_out
 
 
 async def _handle_read_receipt(
@@ -602,6 +797,7 @@ async def _handle_read_receipt(
     account_id: uuid.UUID,
     ev: ReadReceipt,
 ) -> None:
+    ev_out: Event | None = None
     async with session_factory() as session:
         async with session.begin():
             acct = await session.get(ChannelAccount, account_id)
@@ -634,19 +830,26 @@ async def _handle_read_receipt(
                 )
                 .values(delivery_status="read")
             )
-            await event_bus.emit(
-                session,
-                Event(
-                    workspace_id=acct.workspace_id,
-                    type="message.updated",
-                    actor=Actor(type="contact", id=identity.contact_id),
-                    conversation_id=conv.id,
-                    contact_id=identity.contact_id,
-                    channel_type=acct.channel_type,
-                    channel_account_id=acct.id,
-                    payload={"read_watermark": ev.watermark.isoformat()},
-                ),
+            ev_out = Event(
+                workspace_id=acct.workspace_id,
+                type="message.updated",
+                actor=Actor(type="contact", id=identity.contact_id),
+                conversation_id=conv.id,
+                contact_id=identity.contact_id,
+                channel_type=acct.channel_type,
+                channel_account_id=acct.id,
+                payload={"read_watermark": ev.watermark.isoformat()},
             )
+            await event_bus.emit(session, ev_out)
+    # watermark has no message_id — live clients handle it by refetching the
+    # thread, which is exactly the never-freeze fallback. Best effort.
+    if ev_out is not None:
+        from ..services import messaging  # local import to avoid a cycle
+
+        try:
+            await messaging.publish_realtime([ev_out])
+        except Exception:  # noqa: BLE001
+            log.warning("realtime publish failed for read receipt", exc_info=True)
 
 
 async def _handle_contact_update(

@@ -78,6 +78,10 @@ type messageInEvent struct {
 	ExternalTimestamp string         `json:"external_timestamp,omitempty"`
 	Profile           profileHint    `json:"profile"`
 	MediaRefs         []mediaRef     `json:"media_refs,omitempty"`
+	// Meta carries adapter-specific hints into MessageIn.meta. whatsapp_app
+	// sets {"lid": "<digits>"} for LID-addressed senders so the API can
+	// reconcile a lid-keyed identity once the real phone becomes known.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 type deliveryStatusEvent struct {

@@ -66,6 +66,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /devices/{id}/qr", s.handleQR)
 	mux.HandleFunc("GET /devices/{id}/health", s.handleHealth)
 	mux.HandleFunc("POST /devices/{id}/send", s.handleSend)
+	mux.HandleFunc("POST /devices/{id}/resolve", s.handleResolve)
 	mux.HandleFunc("POST /devices/{id}/logout", s.handleLogout)
 	mux.HandleFunc("DELETE /devices/{id}", s.handleDelete)
 	// media fetch for inbound (token-gated, no auth header)
@@ -210,6 +211,39 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusBadGateway
 	}
 	writeJSON(w, code, resp)
+}
+
+type resolveBody struct {
+	IDs []string `json:"ids"`
+}
+
+// handleResolve classifies bare digit ids (lid vs phone) via the device's
+// local whatsmeow store — see Device.resolveIDs. Store-only and side-effect
+// free; used by the API's wa-lid identity backfill.
+func (s *server) handleResolve(w http.ResponseWriter, r *http.Request) {
+	if !s.authManage(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		return
+	}
+	d, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "device not found"})
+		return
+	}
+	if d.getClient() == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "device store unavailable"})
+		return
+	}
+	var body resolveBody
+	if err := readJSON(r, &body); err != nil || len(body.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "ids required"})
+		return
+	}
+	if len(body.IDs) > 500 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "too many ids (max 500)"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "results": d.resolveIDs(body.IDs)})
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {

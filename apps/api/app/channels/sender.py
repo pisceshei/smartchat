@@ -203,7 +203,7 @@ async def _send_flow(
         credentials = await get_credentials(session, acct)
         adapter = get_adapter(acct.channel_type)
         account_ref = AccountRef.from_row(acct)
-        to = identity.external_user_id
+        to = _bridge_to(identity, acct.channel_type)
         payloads = adapter.render(content, window_open=window_open)
         if not payloads:
             return "failed", "UNSUPPORTED_CONTENT", None
@@ -237,6 +237,20 @@ async def _send_flow(
             return outcome, code, ext_id
         ext_id = ext_id or result.external_message_id
     return "sent", None, ext_id
+
+
+def _bridge_to(identity: ChannelIdentity, channel_type: str) -> str:
+    """Outbound recipient for the channel adapter. whatsapp_app identities
+    still keyed by an UNRESOLVED lid (external id == meta.wa_lid) are addressed
+    at the lid server explicitly (``<digits>@lid``) so delivery never depends
+    on the bridge's error-string retry heuristic; identities healed to a real
+    phone send bare digits as before."""
+    to: str = identity.external_user_id
+    if channel_type == "whatsapp_app":
+        wa_lid = (identity.meta or {}).get("wa_lid")
+        if wa_lid and wa_lid == to:
+            return f"{wa_lid}@lid"
+    return to
 
 
 async def _pause_account(
@@ -277,7 +291,10 @@ async def _finalize_sent(
     mid: uuid.UUID,
     ext_id: str | None,
 ) -> None:
+    from ..services import messaging  # local import to avoid a cycle
+
     account_id: uuid.UUID | None = None
+    ev_out: Event | None = None
     async with session_factory() as session:
         async with session.begin():
             msg = (
@@ -311,22 +328,15 @@ async def _finalize_sent(
                             index_elements=["channel_account_id", "external_message_id"]
                         )
                     )
-            await event_bus.emit(
-                session,
-                Event(
-                    workspace_id=msg.workspace_id,
-                    type="message.updated",
-                    actor=Actor(type="system"),
-                    conversation_id=msg.conversation_id,
-                    channel_account_id=account_id,
-                    payload={
-                        "message_id": str(msg.id),
-                        "delivery_status": msg.delivery_status,
-                        "external_message_id": msg.external_message_id,
-                    },
-                ),
+            ev_out = messaging.delivery_status_event(
+                msg,
+                status=msg.delivery_status,
+                external_message_id=msg.external_message_id,
+                channel_account_id=account_id,
             )
+            await event_bus.emit(session, ev_out)
     # replay delivery/read statuses that arrived before we knew the ext id
+    replay_events: list[Event] = []
     if ext_id and account_id is not None:
         parked = await pop_parked(redis, account_id, ext_id)
         if parked:
@@ -335,7 +345,18 @@ async def _finalize_sent(
                     acct = await session.get(ChannelAccount, account_id)
                     if acct is not None:
                         for status_ev in parked:
-                            await apply_delivery_status(session, acct, mid, status_ev)
+                            e = await apply_delivery_status(session, acct, mid, status_ev)
+                            if e is not None:
+                                replay_events.append(e)
+    # live tick advance (pending→sent→…) — best effort AFTER the commits; must
+    # never raise: the send is already finalized and a raise would Retry a
+    # completed send.
+    to_publish = [e for e in [ev_out, *replay_events] if e is not None]
+    if to_publish:
+        try:
+            await messaging.publish_realtime(to_publish)
+        except Exception:  # noqa: BLE001
+            log.warning("realtime publish failed for message %s", mid, exc_info=True)
 
 
 async def _finalize_failed(
@@ -343,6 +364,9 @@ async def _finalize_failed(
     mid: uuid.UUID,
     error_code: str | None,
 ) -> None:
+    from ..services import messaging  # local import to avoid a cycle
+
+    ev_out: Event | None = None
     async with session_factory() as session:
         async with session.begin():
             msg = (
@@ -352,20 +376,15 @@ async def _finalize_failed(
                 return
             msg.delivery_status = "failed"
             msg.delivery_error = error_code or "PERMANENT"
-            await event_bus.emit(
-                session,
-                Event(
-                    workspace_id=msg.workspace_id,
-                    type="message.updated",
-                    actor=Actor(type="system"),
-                    conversation_id=msg.conversation_id,
-                    payload={
-                        "message_id": str(msg.id),
-                        "delivery_status": "failed",
-                        "error": {"code": msg.delivery_error},
-                    },
-                ),
+            ev_out = messaging.delivery_status_event(
+                msg, status="failed", error_code=msg.delivery_error
             )
+            await event_bus.emit(session, ev_out)
+    if ev_out is not None:
+        try:
+            await messaging.publish_realtime([ev_out])
+        except Exception:  # noqa: BLE001
+            log.warning("realtime publish failed for message %s", mid, exc_info=True)
 
 
 # --------------------------------------------------------------------------

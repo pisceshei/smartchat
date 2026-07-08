@@ -81,6 +81,57 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   tab (`InboxPage` defaults to `"ai"`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Round 9 (2026-07-09): WhatsApp lid-as-phone + outbound/AI realtime rendering**
+  (deployed; production E2E per the checklist below). Two user-reported bugs:
+  a WhatsApp contact showed phone `+56985642876983` — a **lid**, not a phone
+  (real number +85266577437); and AI replies rendered as **empty bubbles** in
+  the admin inbox (and were dropped on the widget) until a manual refresh,
+  with delivery ticks frozen at the spinner.
+  - *lid fix (bridge)*: `handleMessage` resolves the sender phone via
+    `SenderAlt` → `Store.LIDs.GetPNForLID` (local store, no usync); an
+    unresolved sender gets **no phone at all** (never `"+<lid>"`) and the lid
+    always travels as `meta.lid`. New `POST /devices/{id}/resolve` classifies
+    digits (lid/pn/unknown) from the store for the backfill. The 9da5793
+    send-retry now picks its target from the store (`lidRetryTarget`) so a
+    transient usync 429 on a REAL phone can no longer poison `lidRecipients`.
+  - *lid fix (API)*: `_upsert_identity` reconciles — fresh unresolved lid
+    (phone stays empty, UI shows "-"), **heal** (later phone-keyed event
+    re-keys the lid identity in place, fixes the `"+<lid>"` placeholder,
+    emits contact.updated), **duplicate** (lid- and phone-keyed identities →
+    `merge_contacts`, placeholder cleared first). `sender._bridge_to`
+    addresses unresolved lid identities as `<lid>@lid` explicitly. Backfill:
+    `dc run --rm api python -m apps.api.app.backfill_wa_lid_phones`
+    (dry-run default; `--apply --map <lid>=<+phone> --clear-phone <lid>`).
+  - *realtime fix (backend)*: outbound `message.created` now nests the full
+    row under `payload.message` via the shared builder
+    `messaging.message_row_payload()` (also used by ingress — one shape,
+    contract-locked by `tests/realtime/test_message_event_contract.py`), and
+    adds flat `id`/`conversation_id`/`created_at` so the visitor whitelist
+    passes a complete row to the widget. Delivery-status transitions
+    (`_finalize_sent`/`_finalize_failed`/`apply_delivery_status`/read
+    watermark) now `publish_realtime` after commit → ticks advance live.
+    Root cause of the empty bubble: the gateway slims flat `content` off
+    message frames for non-open conversations, the SPA never sets
+    `open_conversation_id`, and only the nested row survives the slim —
+    outbound had no nested row (inbound did, which is why inbound worked).
+  - *realtime fix (frontend)*: `applyEvent.messageFromEvent` never fabricates
+    an empty-blocks row again (synthesizes a text block from `text_plain` +
+    refetches, or falls to invalidate); `message.updated` is **patch-only**
+    (`patchMessage`) — also fixes the latent translate-wipe. Widget
+    `messageFromPayload` accepts the whitelisted flat `id`, synthesizes from
+    `text_plain`, and patches `delivery_status`. Round-7 badge semantics and
+    the visitor-echo-undeliverable invariant are preserved (locked by
+    `apps/web/src/realtime/applyEvent.test.ts` — first web vitest — and
+    `apps/widget/tests/messageFromPayload.test.ts`).
+  - *deploy-order note*: bridge-wa must go out together with (or before) the
+    api — an OLD bridge sends the fake `"+<lid>"` phone with no `meta.lid`,
+    which the new API cannot recognize for brand-new senders (it CAN protect
+    identities already annotated with `meta.wa_lid`). Run the backfill after
+    the bridge is up. Adversarial review also hardened: duplicate-contact
+    merges run in their own transaction AFTER the message commit (canonical
+    ordered row locks — a merge deadlock can never drop the customer's
+    message), and the backfill planner refuses two migrates onto one phone
+    (identity unique key).
 - **Round 5 (2026-07-08, commit `82e074f`, E2E-verified in prod): four fixes** —
   (1) *Inbox realtime*: ingress now publish_realtime()s inbound messages (side
   effects unified via `messaging.register_inbound_message`), `client_frame`
@@ -131,6 +182,8 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   retries such sends via `@lid` (Signal session already exists from inbound) and
   caches the discovery per device. Verified: `[Bridge INFO] recipient … is a lid,
   not a phone — delivered via @lid`, messages went sent→delivered→read.
+  **Extended in round 9**: the stored identity/phone itself is now healed (the
+  9da5793 fix only made delivery work — the contact kept displaying `+<lid>`).
 - **Outbound replies were never dispatched to the channel** (fixed 2026-07-08 on
   branch `fix/outbound-dispatch`, E2E-verified): `messaging.send_message`
   writes the message `delivery_status='pending'` and emits `message.created` with

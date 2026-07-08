@@ -20,6 +20,7 @@ sends, and POSTs normalized `InboundEvent`s back to the SmartChat API.
 | `GET  /devices/{id}/qr`           | `X-Bridge-Auth`   | `200 {qr: string|null, status}` |
 | `GET  /devices/{id}/health`       | `X-Bridge-Auth`   | `200 {status, jid?, phone?, pushname?}` |
 | `POST /devices/{id}/send`         | `X-Bridge-Auth` **or** `X-Bridge-Signature` | `{to, payload}` → `200 {ok, message_id}` / `4xx-5xx {ok:false, status?}` |
+| `POST /devices/{id}/resolve`      | `X-Bridge-Auth`   | `{ids: ["<digits>", …]}` (≤500) → `200 {ok, results: {id: {kind: "lid"\|"pn"\|"unknown", pn?, lid?}}}` — classifies bare digits via the local lid↔phone store (offline-safe, no usync) |
 | `POST /devices/{id}/logout`       | `X-Bridge-Auth`   | `200 {ok}` |
 | `DELETE /devices/{id}`            | `X-Bridge-Auth`   | `200 {ok}` |
 | `GET  /media/{token}`             | token in path     | raw media bytes (inbound-media fetch by the ingress pipeline) |
@@ -70,6 +71,13 @@ unchanged.
   "media_refs":[]
 }]}
 ```
+
+**LID senders**: when WhatsApp addresses the sender by a `@lid` privacy id, the
+bridge resolves the real phone via `SenderAlt` → the local lid↔phone store. If
+resolved, `external_user_id`/`profile.phone` are the real number as usual; if
+NOT resolvable, `external_user_id` is the lid digits and **`profile.phone` is
+omitted** (never a fake `+<lid>`). Either way `meta: {"lid": "<digits>"}` is
+attached so the API can key/heal the identity (`ChannelIdentity.meta.wa_lid`).
 
 ### `message_in` (media)
 
@@ -175,6 +183,10 @@ version-sensitive call sites are:
 - `whatsmeow.NewClient(store, log)`, `client.GetQRChannel(ctx)`, `client.Connect()`
 - `client.SendMessage(ctx, jid, *waE2E.Message)`, `client.Upload(ctx, data, whatsmeow.Media*)`
 - `client.Download(ctx, DownloadableMessage)`, `client.Logout(ctx)`, `store.Device.Delete(ctx)`
+- `client.Store.LIDs.GetPNForLID(ctx, jid)` / `.GetLIDForPN(ctx, jid)` /
+  `.PutLIDMapping(ctx, lid, pn)` — the lid↔phone store used for inbound sender
+  resolution and `POST /devices/{id}/resolve`; plus `types.HiddenUserServer`,
+  `types.DefaultUserServer`, `types.EmptyJID`, `MessageInfo.SenderAlt`
 - proto package `go.mau.fi/whatsmeow/proto/waE2E`; message field names `URL`,
   `Mimetype`, `MediaKey`, `FileEncSHA256`, `FileSHA256`, `FileLength`, `Caption`,
   `FileName`, `PTT`.

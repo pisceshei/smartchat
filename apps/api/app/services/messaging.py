@@ -322,8 +322,44 @@ async def _open_session(
     ).scalars().first()
 
 
+def message_row_payload(message: Message, *, created_at: datetime | None = None) -> dict[str, Any]:
+    """JSON-safe full message row for realtime payloads. The SINGLE builder
+    shared by _message_event (outbound) and channels/ingress_pipeline (inbound)
+    so the two shapes cannot drift — shape drift here has broken realtime
+    rendering before. Locked by tests/realtime/test_message_event_contract.py.
+
+    ``created_at`` covers pre-flush rows whose column default hasn't fired yet.
+    """
+    ts = message.created_at or created_at or datetime.now(UTC)
+    return {
+        "id": str(message.id),
+        "conversation_id": str(message.conversation_id),
+        "channel_identity_id": str(message.channel_identity_id)
+        if message.channel_identity_id
+        else None,
+        "direction": message.direction,
+        "sender_type": message.sender_type,
+        "sender_id": str(message.sender_id) if message.sender_id else None,
+        "msg_type": message.msg_type,
+        "content": message.content or {"blocks": []},
+        "text_plain": message.text_plain,
+        "is_note": bool(message.is_note),
+        "sent_via": message.sent_via,
+        "client_msg_id": message.client_msg_id,
+        "delivery_status": message.delivery_status,
+        "created_at": ts.isoformat(),
+    }
+
+
 def _message_event(message: Message, conversation: Conversation, actor: Actor,
                    *, requires_channel_send: bool) -> Event:
+    # The flat row keys double as the visitor-facing body (filter_for_visitor
+    # whitelists id/content/created_at/…), while the nested "message" copy is
+    # what live AGENT clients render from: the gateway slims top-level
+    # content/translations off message.* frames for non-open conversations,
+    # but never touches the nested row. Without it the admin inbox showed
+    # empty bubbles for AI/agent replies until a manual refresh.
+    row = message_row_payload(message)
     return Event(
         workspace_id=message.workspace_id,
         type="message.created",
@@ -333,21 +369,10 @@ def _message_event(message: Message, conversation: Conversation, actor: Actor,
         channel_type=conversation.channel_type,
         channel_account_id=conversation.channel_account_id,
         payload={
+            **row,
             "message_id": str(message.id),
-            "channel_identity_id": str(message.channel_identity_id)
-            if message.channel_identity_id
-            else None,
-            "direction": message.direction,
-            "sender_type": message.sender_type,
-            "sender_id": str(message.sender_id) if message.sender_id else None,
-            "msg_type": message.msg_type,
-            "content": message.content,
-            "text_plain": message.text_plain,
-            "is_note": message.is_note,
-            "sent_via": message.sent_via,
-            "client_msg_id": message.client_msg_id,
-            "delivery_status": message.delivery_status,
             "requires_channel_send": requires_channel_send,
+            "message": row,
         },
     )
 
@@ -378,6 +403,36 @@ def _conversation_event(conversation: Conversation, actor: Actor, *, etype: str 
             "ai_state": conversation.ai_state,
             "translation": conversation.translation,
             **(extra or {}),
+        },
+    )
+
+
+def delivery_status_event(
+    message: Message,
+    *,
+    status: str,
+    external_message_id: str | None = None,
+    error_code: str | None = None,
+    channel_type: str | None = None,
+    channel_account_id: uuid.UUID | None = None,
+) -> Event:
+    """message.updated carrying ONLY the delivery-status transition. The flat
+    payload has no content/message keys on purpose: live clients apply it as a
+    partial patch (tick advance) and must never rebuild a full row from it."""
+    return Event(
+        workspace_id=message.workspace_id,
+        type="message.updated",
+        actor=Actor(type="system"),
+        conversation_id=message.conversation_id,
+        channel_type=channel_type,
+        channel_account_id=channel_account_id,
+        payload={
+            "message_id": str(message.id),
+            "id": str(message.id),
+            "conversation_id": str(message.conversation_id),
+            "delivery_status": status,
+            "external_message_id": external_message_id,
+            "error_code": error_code,
         },
     )
 

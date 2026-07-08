@@ -284,12 +284,40 @@ func (d *Device) handleMessage(e *events.Message) {
 		return // unsupported message type (reaction, poll, protocol, …)
 	}
 
-	// LID addressing: WhatsApp now identifies some senders by a @lid privacy id
-	// instead of their phone JID. SenderAlt carries the real phone JID — use it
-	// so the contact's external id / phone are the phone number, not the LID.
+	// LID addressing: WhatsApp identifies some senders by a @lid privacy id
+	// instead of their phone JID. Resolve to the real phone whenever knowable
+	// (SenderAlt first, then the local whatsmeow lid<->pn store) and NEVER
+	// report a lid as profile.phone — an unresolved sender gets no phone at
+	// all. The lid always travels in meta so the API can key the identity by
+	// it and heal (external id + phone) once the real number surfaces later.
 	sender := info.Sender
-	if info.AddressingMode == types.AddressingModeLID && !info.SenderAlt.IsEmpty() {
-		sender = info.SenderAlt
+	var lid string
+	if sender.Server == types.HiddenUserServer {
+		lid = sender.User
+		if !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
+			sender = info.SenderAlt
+		} else if pn := d.pnForLID(info.Sender); !pn.IsEmpty() {
+			sender = pn
+		}
+	} else if !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.HiddenUserServer {
+		// PN-addressed with the lid in SenderAlt — record it so the API can
+		// reconcile an identity previously keyed by this person's lid.
+		lid = info.SenderAlt.User
+	}
+	phoneKnown := sender.Server == types.DefaultUserServer
+	if phoneKnown && lid != "" {
+		// Best-effort store heal: future pnForLID lookups (and whatsmeow's own
+		// phone-send resolution) hit without ever needing a usync query.
+		d.putLIDMapping(lid, sender)
+	}
+
+	profile := profileHint{DisplayName: info.PushName}
+	if phoneKnown {
+		profile.Phone = "+" + sender.User
+	}
+	var meta map[string]string
+	if lid != "" {
+		meta = map[string]string{"lid": lid}
 	}
 
 	ev := messageInEvent{
@@ -298,8 +326,9 @@ func (d *Device) handleMessage(e *events.Message) {
 		ExternalUserID:    sender.User,
 		Content:           messageContent{Blocks: blocks},
 		ExternalTimestamp: info.Timestamp.UTC().Format(time.RFC3339),
-		Profile:           profileHint{DisplayName: info.PushName, Phone: "+" + sender.User},
+		Profile:           profile,
 		MediaRefs:         refs,
+		Meta:              meta,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -529,9 +558,16 @@ func (d *Device) send(ctx context.Context, req sendRequest) sendOutcome {
 	for _, m := range msgs {
 		resp, sErr := c.SendMessage(ctx, jid, m)
 		if sErr != nil && jid.Server == types.DefaultUserServer && looksLikeLIDResolutionFailure(sErr) {
-			// The "phone" doesn't resolve on WhatsApp — it's a lid id stored
-			// from inbound. Retry via the lid server, where the Signal session
-			// from the inbound message already exists.
+			// The digits didn't resolve as a phone — almost always a lid id
+			// stored from inbound; retry via the lid server, where the Signal
+			// session from the inbound message already exists. (A transient
+			// usync failure on a REAL phone also lands here; its @lid retry
+			// then fails too — no Signal session — and the send surfaces 502
+			// as retryable. Consulting the local store first is pointless:
+			// whatsmeow negative-caches the very miss that produced this
+			// error, so a lookup here would return the same empty result.)
+			// markLIDRecipient only fires on SUCCESS, so a genuine phone can
+			// never be mis-cached as a lid.
 			lidJID := types.NewJID(jid.User, types.HiddenUserServer)
 			if resp2, err2 := c.SendMessage(ctx, lidJID, m); err2 == nil {
 				d.markLIDRecipient(jid.User)
@@ -563,6 +599,87 @@ func (d *Device) markLIDRecipient(user string) {
 		d.lidRecipients = make(map[string]bool)
 	}
 	d.lidRecipients[user] = true
+}
+
+// ---- lid <-> phone resolution (local whatsmeow store; never usync) ---------
+
+// pnForLID resolves a @lid privacy JID to the real phone JID from the local
+// whatsmeow store. Returns the zero JID when unknown or on error. Store-only:
+// no network round-trip, no usync rate limits, works while offline.
+func (d *Device) pnForLID(lidJID types.JID) types.JID {
+	c := d.getClient()
+	if c == nil {
+		return types.EmptyJID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pn, err := c.Store.LIDs.GetPNForLID(ctx, lidJID)
+	if err != nil {
+		d.mgr.log.Warnf("device %s GetPNForLID(%s): %v", d.id, lidJID, err)
+		return types.EmptyJID
+	}
+	return pn
+}
+
+// lidForPN is the reverse lookup (phone JID → @lid), also store-only.
+func (d *Device) lidForPN(pnJID types.JID) types.JID {
+	c := d.getClient()
+	if c == nil {
+		return types.EmptyJID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lid, err := c.Store.LIDs.GetLIDForPN(ctx, pnJID)
+	if err != nil {
+		d.mgr.log.Warnf("device %s GetLIDForPN(%s): %v", d.id, pnJID, err)
+		return types.EmptyJID
+	}
+	return lid
+}
+
+// putLIDMapping records a discovered lid<->phone pair in the whatsmeow store
+// so future lookups (and whatsmeow's own phone-send resolution) hit locally.
+func (d *Device) putLIDMapping(lid string, pn types.JID) {
+	c := d.getClient()
+	if c == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Store.LIDs.PutLIDMapping(ctx, types.NewJID(lid, types.HiddenUserServer), pn); err != nil {
+		d.mgr.log.Warnf("device %s PutLIDMapping(%s→%s): %v", d.id, lid, pn.User, err)
+	}
+}
+
+type resolveResult struct {
+	Kind string `json:"kind"` // "lid" | "pn" | "unknown"
+	PN   string `json:"pn,omitempty"`
+	LID  string `json:"lid,omitempty"`
+}
+
+// resolveIDs classifies bare digit ids against the local lid<->phone store:
+// digits that are a known lid come back kind="lid" with the real phone; digits
+// that are a known phone come back kind="pn" with their lid; anything the
+// store doesn't know is "unknown". Used by the API's identity backfill.
+func (d *Device) resolveIDs(ids []string) map[string]resolveResult {
+	out := make(map[string]resolveResult, len(ids))
+	for _, raw := range ids {
+		digits := stripNonDigits(raw)
+		if digits == "" {
+			out[raw] = resolveResult{Kind: "unknown"}
+			continue
+		}
+		if pn := d.pnForLID(types.NewJID(digits, types.HiddenUserServer)); !pn.IsEmpty() {
+			out[raw] = resolveResult{Kind: "lid", PN: pn.User, LID: digits}
+			continue
+		}
+		if l := d.lidForPN(types.NewJID(digits, types.DefaultUserServer)); !l.IsEmpty() {
+			out[raw] = resolveResult{Kind: "pn", PN: digits, LID: l.User}
+			continue
+		}
+		out[raw] = resolveResult{Kind: "unknown"}
+	}
+	return out
 }
 
 // looksLikeLIDResolutionFailure matches whatsmeow's phone→lid resolution

@@ -192,15 +192,44 @@ def test_visitor_only_event_not_delivered_to_agents():
 
 
 def test_message_body_slimmed_unless_conversation_open():
-    ev = _event(data={"id": "m1", "content": {"blocks": [1]}, "text_plain": "hi"})
+    # the admin SPA never sets open_conversation_id, so the nested `message`
+    # row is what live agents actually render from — it MUST survive the slim
+    # (dropping it = empty AI/agent bubbles until a manual refresh).
+    ev = _event(
+        data={
+            "id": "m1",
+            "content": {"blocks": [1]},
+            "text_plain": "hi",
+            "message": {"id": "m1", "content": {"blocks": [1]}},
+        }
+    )
     closed_frame = filter_for_agent(ev, _agent(open_conv=None))
     assert closed_frame is not None
     assert "content" not in closed_frame["data"]
     assert closed_frame["data"]["text_plain"] == "hi"  # preview survives
+    assert closed_frame["data"]["message"]["content"] == {"blocks": [1]}  # body survives nested
 
     open_frame = filter_for_agent(ev, _agent(open_conv=CONV))
     assert open_frame is not None
     assert open_frame["data"]["content"] == {"blocks": [1]}
+
+
+def test_delivery_update_fields_survive_agent_slim():
+    # delivery-status message.updated has no content — everything the frontend
+    # tick patch needs must survive the slim for a non-open conversation
+    ev = _event(
+        "message.updated",
+        data={
+            "message_id": "m1",
+            "id": "m1",
+            "conversation_id": str(CONV),
+            "delivery_status": "read",
+        },
+    )
+    frame = filter_for_agent(ev, _agent(open_conv=None))
+    assert frame is not None
+    for key in ("message_id", "id", "conversation_id", "delivery_status"):
+        assert frame["data"][key] is not None
 
 
 def test_typing_only_for_open_conversation():
