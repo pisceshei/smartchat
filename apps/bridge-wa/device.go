@@ -50,6 +50,7 @@ type Device struct {
 	pushname       string
 	lastEmitted    string
 	closed         bool
+	lidRecipients  map[string]bool // bare numbers discovered to be @lid ids, not phones
 
 	jobs chan func()
 	stop chan struct{}
@@ -512,6 +513,14 @@ func (d *Device) send(ctx context.Context, req sendRequest) sendOutcome {
 	if err != nil {
 		return sendOutcome{httpCode: http.StatusBadRequest, errMsg: err.Error()}
 	}
+	// A bare number may actually be a @lid privacy id, not a phone: inbound
+	// messages on LID addressing with no SenderAlt store the lid digits as the
+	// contact's external id. Phone addressing for those fails server-side
+	// ("no LID found for <n>@s.whatsapp.net"), so once a number is discovered
+	// to be a lid (below), address the lid server directly from the start.
+	if jid.Server == types.DefaultUserServer && d.isLIDRecipient(jid.User) {
+		jid = types.NewJID(jid.User, types.HiddenUserServer)
+	}
 	msgs := d.buildMessages(ctx, req.Payload.Blocks)
 	if len(msgs) == 0 {
 		return sendOutcome{httpCode: http.StatusBadRequest, errMsg: "no sendable blocks"}
@@ -519,12 +528,53 @@ func (d *Device) send(ctx context.Context, req sendRequest) sendOutcome {
 	var lastID string
 	for _, m := range msgs {
 		resp, sErr := c.SendMessage(ctx, jid, m)
+		if sErr != nil && jid.Server == types.DefaultUserServer && looksLikeLIDResolutionFailure(sErr) {
+			// The "phone" doesn't resolve on WhatsApp — it's a lid id stored
+			// from inbound. Retry via the lid server, where the Signal session
+			// from the inbound message already exists.
+			lidJID := types.NewJID(jid.User, types.HiddenUserServer)
+			if resp2, err2 := c.SendMessage(ctx, lidJID, m); err2 == nil {
+				d.markLIDRecipient(jid.User)
+				d.mgr.log.Infof("device %s: recipient %s is a lid, not a phone — delivered via @lid", d.id, jid.User)
+				jid = lidJID
+				lastID = string(resp2.ID)
+				continue
+			}
+			return sendOutcome{httpCode: http.StatusBadGateway, errMsg: sErr.Error()}
+		}
 		if sErr != nil {
 			return sendOutcome{httpCode: http.StatusBadGateway, errMsg: sErr.Error()}
 		}
 		lastID = string(resp.ID)
 	}
 	return sendOutcome{ok: true, messageID: lastID}
+}
+
+func (d *Device) isLIDRecipient(user string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lidRecipients[user]
+}
+
+func (d *Device) markLIDRecipient(user string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lidRecipients == nil {
+		d.lidRecipients = make(map[string]bool)
+	}
+	d.lidRecipients[user] = true
+}
+
+// looksLikeLIDResolutionFailure matches whatsmeow's phone→lid resolution
+// errors: the server has no lid for the number (it isn't a registered phone)
+// or the usync info query used to fill the lid cache failed (e.g. 429
+// rate-overlimit). Both mean phone addressing cannot work for this recipient.
+func looksLikeLIDResolutionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no LID found") || strings.Contains(msg, "fill LID cache")
 }
 
 func (d *Device) buildMessages(ctx context.Context, blocks []map[string]any) []*waE2E.Message {
