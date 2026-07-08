@@ -1388,6 +1388,15 @@ export const zhHant = {
   "sub.stripe.saved": "Stripe 設定已更新",
   "sub.stripe.encryptedNote": "Secret 與 Webhook Secret 僅寫入、不回傳；留空即維持現有值。",
   "sub.stripe.loadFailed": "尚未提供 Stripe 設定端點（後端待部署），儲存將於端點上線後生效。",
+
+  /* 新訊息通知 */
+  "notify.titleFlash": "【新訊息】",
+  "notify.newMessage": "新訊息",
+  "notify.settings.title": "通知設定",
+  "notify.settings.sound": "提示音",
+  "notify.settings.desktop": "桌面通知",
+  "notify.settings.blocked": "瀏覽器已封鎖通知，請於瀏覽器設定中允許本站顯示通知。",
+  "notify.settings.hint": "視窗未聚焦時，新訊息會以提示音、桌面通知與分頁標題閃爍提醒。",
 } as const;
 
 export type I18nKey = keyof typeof zhHant;

@@ -18,12 +18,13 @@ import {
 import { Avatar, Badge, Dropdown, Popover, Tooltip } from "antd";
 import type { ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useMessageNotifications } from "@/hooks/useMessageNotifications";
 import { useRealtime } from "@/hooks/useRealtime";
 import { t } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
 import { useRealtimeStore } from "@/stores/realtime";
-import { EmptyState } from "./EmptyState";
 import { LogoMark } from "./Logo";
+import { NotificationSettings } from "./NotificationSettings";
 
 interface RailItem {
   key: string;
@@ -67,6 +68,7 @@ function RailButton({
 
 export function AppShell() {
   useRealtime();
+  useMessageNotifications();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const user = useAuthStore((s) => s.user);
@@ -146,15 +148,7 @@ export function AppShell() {
             <Popover
               placement="rightBottom"
               trigger="click"
-              content={
-                <div style={{ width: 280 }}>
-                  <EmptyState
-                    compact
-                    icon={<BellOutlined />}
-                    title={t("shell.notifications.empty")}
-                  />
-                </div>
-              }
+              content={<NotificationSettings />}
             >
               <button type="button" className="sc-rail-item" aria-label={t("nav.notifications")}>
                 <BellOutlined />

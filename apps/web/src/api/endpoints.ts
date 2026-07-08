@@ -200,7 +200,13 @@ export const inboxApi = {
   ) => http<Message>("POST", `/inbox/conversations/${conversationId}/messages`, { body }),
 
   markRead: (conversationId: string) =>
-    http<void>("POST", `/inbox/conversations/${conversationId}/read`),
+    // Backend `advance_read` requires a JSON body (ReadIn, all-optional). Sending
+    // no body makes FastAPI reject it with 422, so always send an empty object.
+    http<{ ok: boolean; agent_unread_count: number }>(
+      "POST",
+      `/inbox/conversations/${conversationId}/read`,
+      { body: {} },
+    ),
 
   /** Dispatches to the backend's dedicated action routes (the backend has no
    * single PATCH — assign/close/reopen/tags/translation/managed are distinct

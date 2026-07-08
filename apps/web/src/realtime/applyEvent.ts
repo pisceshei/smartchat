@@ -128,7 +128,9 @@ export function applyEvent(qc: QueryClient, evt: WsEnvelope): void {
 
     case "unread.changed": {
       const conversationId = (payload["conversation_id"] as string) ?? evt.conversation_id;
-      const count = payload["agent_unread_count"] as number | undefined;
+      // Backend emits `unread.changed` with the key `count` (services/realtime
+      // unread.py); keep `agent_unread_count` as a legacy fallback.
+      const count = (payload["count"] ?? payload["agent_unread_count"]) as number | undefined;
       if (conversationId && typeof count === "number") {
         patchConversationLists(qc, conversationId, { agent_unread_count: count });
       }

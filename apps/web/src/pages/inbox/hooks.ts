@@ -196,21 +196,45 @@ export function useUpdateConversation(conversationId: string) {
 
 export function useMarkRead(conversationId: string) {
   const qc = useQueryClient();
+  /** Set the conversation's unread badge to `count` in BOTH the list caches
+   *  (what the badge renders) and the detail cache (what the viewer reads). */
+  const setUnread = (count: number) => {
+    qc.setQueriesData<ConvPages>({ queryKey: ["conversations"] }, (data) => {
+      if (!data) return data;
+      return {
+        ...data,
+        pages: data.pages.map((p) => ({
+          ...p,
+          items: p.items.map((c) =>
+            c.id === conversationId ? { ...c, agent_unread_count: count } : c,
+          ),
+        })),
+      };
+    });
+    qc.setQueryData<Conversation>(["conversation", conversationId], (old) =>
+      old ? { ...old, agent_unread_count: count } : old,
+    );
+  };
+
   return useMutation({
     mutationFn: () => inboxApi.markRead(conversationId),
-    onMutate: () => {
-      qc.setQueriesData<ConvPages>({ queryKey: ["conversations"] }, (data) => {
-        if (!data) return data;
-        return {
-          ...data,
-          pages: data.pages.map((p) => ({
-            ...p,
-            items: p.items.map((c) =>
-              c.id === conversationId ? { ...c, agent_unread_count: 0 } : c,
-            ),
-          })),
-        };
-      });
+    onMutate: async () => {
+      // Cancel in-flight detail refetch so it can't clobber the optimistic zero.
+      await qc.cancelQueries({ queryKey: ["conversation", conversationId] });
+      const prevDetail = qc.getQueryData<Conversation>(["conversation", conversationId]);
+      setUnread(0);
+      return { prevDetail };
+    },
+    onError: (_e, _v, ctx) => {
+      // Roll the detail cache back; re-fetch the lists to restore server truth.
+      if (ctx?.prevDetail) qc.setQueryData(["conversation", conversationId], ctx.prevDetail);
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onSuccess: (res) => {
+      // Trust the server's authoritative count (normally 0) so a later list
+      // refetch can't revert the badge.
+      setUnread(res?.agent_unread_count ?? 0);
+      void qc.invalidateQueries({ queryKey: ["inbox-summary"] });
     },
   });
 }

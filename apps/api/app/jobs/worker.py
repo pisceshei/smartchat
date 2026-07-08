@@ -110,6 +110,13 @@ from ..billing import jobs as _billing_jobs  # noqa: E402,F401
 from ..marketing import fanout as _mkt_fanout  # noqa: E402,F401
 from ..modules.edm import service as _edm_service  # noqa: E402,F401
 
+# Channel I/O crons — WITHOUT this import the worker never runs them and every
+# real channel silently breaks: ingress_drain (inbound ingress:* → inbox),
+# outbox_sender (outbound → channels), email poll, stuck-send requeue. sender.py
+# self-registers via _register_crons() on import; it was previously only pulled
+# in lazily inside marketing.fanout, so the worker process never loaded it.
+from ..channels import sender as _channel_sender  # noqa: E402,F401
+
 
 class WorkerSettings:
     functions = TASKS

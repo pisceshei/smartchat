@@ -328,6 +328,10 @@ async def connect_account(
         needs_hook_secret = cr.needs_webhook_secret
         dispatch_status = "active" if cr.health.ok else cr.health.status
 
+    # (channel_type, external_id) is globally UNIQUE (webhook routing key). A row
+    # may still exist but be disabled from a previous "remove" (soft-delete) —
+    # reconnecting the same account must REACTIVATE that row, not 409, otherwise
+    # a deleted Telegram/LINE/etc. account can never be re-added.
     dup = (
         await session.execute(
             select(ChannelAccount).where(
@@ -336,20 +340,29 @@ async def connect_account(
             )
         )
     ).scalar_one_or_none()
-    if dup is not None:
+    if dup is not None and (dup.enabled or dup.workspace_id != member.workspace.id):
         raise HTTPException(409, "this account is already connected")
 
-    acct = ChannelAccount(
-        workspace_id=member.workspace.id,
-        channel_type=channel_type,
-        name=name or channel_type,
-        external_id=external_id,
-        config=config,
-        webhook_secret=webhook_secret,
-        status="active",
-        health=health_detail,
-    )
-    session.add(acct)
+    if dup is not None:
+        acct = dup  # reactivate the previously-removed account
+        acct.name = name or acct.name or channel_type
+        acct.config = config
+        acct.webhook_secret = webhook_secret
+        acct.enabled = True
+        acct.status = "active"
+        acct.health = health_detail
+    else:
+        acct = ChannelAccount(
+            workspace_id=member.workspace.id,
+            channel_type=channel_type,
+            name=name or channel_type,
+            external_id=external_id,
+            config=config,
+            webhook_secret=webhook_secret,
+            status="active",
+            health=health_detail,
+        )
+        session.add(acct)
     await session.flush()
     if credentials:
         await set_credentials(session, acct, credentials)
