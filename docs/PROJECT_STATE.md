@@ -67,6 +67,22 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `lavender-candle`/`rose-diffuser`/`sleep-spray`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Outbound replies were never dispatched to the channel** (fixed 2026-07-08 on
+  branch `fix/outbound-dispatch`, verify with real phones): `messaging.send_message`
+  writes the message `delivery_status='pending'` and emits `message.created` with
+  `requires_channel_send=True`, but **nothing consumed that flag** to call
+  `enqueue_send`. Only `marketing/fanout` enqueued; the three interactive paths —
+  inbox agent reply (`modules/inbox/router.py`), AI reply
+  (`ai/agent_runtime.process_event`), and flow send actions (`flow_engine`) —
+  committed + published realtime but never enqueued. **Widget worked** (its
+  delivery is WS fan-out, adapter `send` is a no-op); every real channel left
+  replies at `pending` forever, so AI answers never reached the customer. Fix =
+  the two-layer design the `messaging.py` docstring describes: (a) hot path
+  `messaging.dispatch_channel_sends(events)` enqueues after commit+publish in all
+  three callers; (b) safety net `sender.drain_pending_sends_task` cron drains
+  unclaimed `pending` outbound rows every 15s (`run_at_startup` flushes any
+  backlog). Idempotent via the per-message Redis claim in `send_outbound_message`.
+  Regression test: `apps/api/tests/channels/test_outbound_dispatch.py`.
 - **WhatsApp App inbound** (fixed 2026-07-08, verify with real phones): two bugs —
   (a) first message after pairing arrived on a cold Signal session as
   "Unavailable"/undecryptable → no event → no callback; fixed by
@@ -112,6 +128,23 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `ai-agent` compose service (`apps/api/app/ai/consumer.py`); (3) `process_event`
   only read `payload.sender_type` but ingress events carry the sender in
   `event.actor.type` — fixed to fall back to actor.
+- **Worker never ran the channel I/O crons**: `apps/api/app/jobs/worker.py` only
+  imported `channels/sender.py` lazily (inside `marketing.fanout`), so the worker
+  process never registered `ingress_drain` / `send_outbound_message` / email poll
+  / requeue → EVERY real channel silently broke (widget was fine; it's synchronous
+  WS). Fixed by importing `..channels.sender` at the top of `worker.py` (commit
+  `694b8f8`). Lesson: a `@task`/`register_cron` only takes effect if the worker
+  imports the module.
+- **Outbound never dispatched to the channel**: a `pending` outbound message only
+  reaches its channel if someone calls `sender.enqueue_send(message_id)` after
+  commit — and that call lived ONLY in `marketing/fanout`. Agent/AI/flow replies
+  emitted the `requires_channel_send=True` event but never enqueued (no consumer
+  of that flag existed). Symptom: real-channel replies stuck
+  `delivery_status=pending`, bridge outbound log empty, widget fine. Fixed with
+  `messaging.dispatch_channel_sends` (hot path, all three callers) +
+  `sender.drain_pending_sends_task` (15s pending-drain backstop). Lesson: every
+  `send_message` to a real channel needs a post-commit dispatch; the drain cron
+  is the safety net if a future caller forgets.
 - **Widget boot skeleton stuck**: `useAppState` missed store updates that landed
   between first render and effect-subscribe (same-origin bootstrap resolves in
   ~100ms) — re-read `store.get()` after subscribing.
@@ -119,7 +152,9 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   and background them, then poll (`nohup … > _build.log 2>&1 &`).
 
 ## 7. Commit history anchors (recent)
-`9d18109` prod frontend builds · `956647e` drop dead COPY fixtures · `f6d80b5`
-embed torch 2.6 · `44b070c` deploy runbook · `6306b75` channel+widget+AI+home-mode
-fixes · `116e0ca` AI consumer actor fallback · `c2015c8` bridge rerequest/LID ·
-`ba2da56` media_refs:null fix. Always `git log --oneline` for the latest.
+`ed250d9` outbound-dispatch fix (branch `fix/outbound-dispatch`) · `694b8f8`
+worker channel-I/O crons import · `9d18109` prod frontend builds · `956647e` drop
+dead COPY fixtures · `f6d80b5` embed torch 2.6 · `44b070c` deploy runbook ·
+`6306b75` channel+widget+AI+home-mode fixes · `116e0ca` AI consumer actor
+fallback · `c2015c8` bridge rerequest/LID · `ba2da56` media_refs:null fix. Always
+`git log --oneline` for the latest.
