@@ -699,7 +699,10 @@ async def process_event(
     payload = event.payload or {}
     if payload.get("is_note") or event.conversation_id is None:
         return False
-    sender_type = payload.get("sender_type")
+    # messaging-service events carry sender_type in the payload; ingress-pipeline
+    # events only identify the sender via the envelope actor — accept both.
+    actor_type = event.actor.type if event.actor is not None else None
+    sender_type = payload.get("sender_type") or actor_type
     direction = payload.get("direction")
     async with session_factory() as session:
         conversation = await session.get(Conversation, event.conversation_id)
