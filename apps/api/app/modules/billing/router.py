@@ -81,6 +81,17 @@ class ChangePlanIn(BaseModel):
     addons: AddonsIn = Field(default_factory=AddonsIn)
 
 
+class StripeConfigIn(BaseModel):
+    """Platform Stripe keys (super-admin). Any field left ``None`` is untouched;
+    an explicit empty string clears that value (revert to env/unset). Secret +
+    webhook secret are envelope-encrypted at rest and never echoed back."""
+
+    secret_key: str | None = Field(default=None, max_length=255)
+    publishable_key: str | None = Field(default=None, max_length=255)
+    webhook_secret: str | None = Field(default=None, max_length=255)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+
 # --------------------------------------------------------------------------
 # plans + subscription
 # --------------------------------------------------------------------------
@@ -188,6 +199,8 @@ async def _finalise_order(
         out["status"] = "paid"
         return out
 
+    # pick up a super-admin-configured platform key (DB) before resolving Stripe
+    await stripe_client.prime_platform_stripe(session)
     stripe = stripe_client.get_stripe()
     if stripe is None:
         out["stripe"] = None
@@ -286,6 +299,8 @@ async def stripe_webhook(
     stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
 ) -> dict[str, Any]:
     payload = await request.body()
+    # pick up a super-admin-configured platform webhook secret (DB) first
+    await stripe_client.prime_platform_stripe(session)
     try:
         event = stripe_client.construct_event(payload, stripe_signature or "")
     except BillingDisabledError as e:
@@ -329,3 +344,35 @@ async def admin_change_plan(
         raise HTTPException(status_code=400, detail=str(e)) from e
     await session.commit()
     return await service.subscription_view(session, member.workspace_id)
+
+
+# --------------------------------------------------------------------------
+# platform Stripe config (super_admin) — configure the processor from the backend
+# --------------------------------------------------------------------------
+@router.get("/stripe-config")
+async def get_stripe_config(
+    member: MemberContext = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Non-secret view: which keys are set + their source (db/env/unset) + the
+    publishable key (safe to expose). Never returns secret values."""
+    return await stripe_client.get_platform_stripe_status(session)
+
+
+@router.put("/stripe-config")
+async def put_stripe_config(
+    body: StripeConfigIn,
+    member: MemberContext = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Set/clear the platform Stripe keys (encrypted at rest). Takes effect for
+    the next checkout/webhook (cache invalidated on write)."""
+    await stripe_client.set_platform_stripe(
+        session,
+        secret_key=body.secret_key,
+        publishable_key=body.publishable_key,
+        webhook_secret=body.webhook_secret,
+        currency=body.currency,
+    )
+    await session.commit()
+    return await stripe_client.get_platform_stripe_status(session)

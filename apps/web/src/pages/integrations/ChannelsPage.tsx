@@ -21,6 +21,7 @@ import {
   WeChatKfConnectModal,
   WeComConnectModal,
   WhatsAppApiConnectModal,
+  WhatsAppAppConnectModal,
   WidgetCreateModal,
   YouTubeConnectModal,
   ZaloConnectModal,
@@ -196,7 +197,11 @@ export function ChannelsPage() {
       />
       <EmailConnectModal open={connectType === "email"} onClose={() => setConnectType(null)} />
       <WhatsAppApiConnectModal
-        open={connectType === "whatsapp_api" || connectType === "whatsapp_app"}
+        open={connectType === "whatsapp_api"}
+        onClose={() => setConnectType(null)}
+      />
+      <WhatsAppAppConnectModal
+        open={connectType === "whatsapp_app"}
         onClose={() => setConnectType(null)}
       />
       <SlackConnectModal open={connectType === "slack"} onClose={() => setConnectType(null)} />

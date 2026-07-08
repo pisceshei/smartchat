@@ -21,6 +21,7 @@ MODULE_ROUTERS = [
     "apps.api.app.modules.contacts.router",
     "apps.api.app.modules.inbox.router",
     "apps.api.app.modules.channels.router",
+    "apps.api.app.modules.devices.router",
     "apps.api.app.modules.widget.router",
     "apps.api.app.modules.hooks.router",
     # Phase 4 per-channel webhook stubs (adapter agents fill the bodies).

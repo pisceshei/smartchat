@@ -421,6 +421,23 @@ export const zhHant = {
   "int.tiktok.accessToken": "Access Token",
   "int.tiktok.businessId": "Business ID",
 
+  /* whatsapp app — 掃碼托管（whatsmeow 橋接） */
+  "int.waApp.banRisk": "個人號托管有封號風險，商業用途建議改用 WhatsApp Business API。",
+  "int.waApp.scanHint": "開啟手機 WhatsApp → 設定 → 已連結的裝置 → 連結裝置，掃描此 QR 碼完成配對。",
+  "int.waApp.starting": "正在建立連線…",
+  "int.waApp.waitingQr": "正在取得 QR 碼…",
+  "int.waApp.startFailed": "無法建立連線，請按「重新產生 QR」重試。",
+  "int.waApp.online": "連結成功",
+  "int.waApp.onlineSub": "裝置已上線",
+  "int.waApp.onlineToast": "WhatsApp 已成功連結",
+  "int.waApp.loggedOut": "裝置已在手機端登出，請重新掃碼連結。",
+  "int.waApp.banned": "此號碼已被 WhatsApp 封鎖，無法連結。",
+  "int.waApp.regen": "重新產生 QR",
+  "int.waApp.st.provisioning": "初始化中…",
+  "int.waApp.st.awaitingQr": "等待掃碼…",
+  "int.waApp.st.connecting": "連線中…",
+  "int.waApp.st.pairing": "配對中…",
+
   /* widgets */
   "widget.title": "聊天外掛",
   "widget.add": "新增外掛",
@@ -1338,6 +1355,21 @@ export const zhHant = {
   "sub.pay.failed": "付款失敗",
   "sub.pay.notConfigured": "付款尚未設定（缺少 Stripe 公開金鑰）",
   "sub.pay.disabled": "計費功能尚未啟用",
+
+  /* stripe 後台設定（超級管理員） */
+  "sub.stripe.title": "Stripe 付款設定",
+  "sub.stripe.hint": "設定平台 Stripe 金鑰後，訂閱結帳與點數加購將以此金鑰收款。金鑰以加密方式儲存於伺服器，前端不會回傳明文。",
+  "sub.stripe.secretKey": "Secret Key（sk_…）",
+  "sub.stripe.publishableKey": "Publishable Key（pk_…）",
+  "sub.stripe.webhookSecret": "Webhook Secret（whsec_…）",
+  "sub.stripe.configured": "已設定",
+  "sub.stripe.notConfigured": "未設定",
+  "sub.stripe.secretSet": "已儲存，留空表示不變更",
+  "sub.stripe.secretPlaceholder": "留空表示不變更",
+  "sub.stripe.save": "儲存設定",
+  "sub.stripe.saved": "Stripe 設定已更新",
+  "sub.stripe.encryptedNote": "Secret 與 Webhook Secret 僅寫入、不回傳；留空即維持現有值。",
+  "sub.stripe.loadFailed": "尚未提供 Stripe 設定端點（後端待部署），儲存將於端點上線後生效。",
 } as const;
 
 export type I18nKey = keyof typeof zhHant;

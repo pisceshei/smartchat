@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { t } from "@/i18n";
 import { fullTime } from "@/utils/time";
 import { useIsSuperAdmin } from "./plan";
+import { StripeConfigCard } from "./StripeConfigCard";
 import "./billing.css";
 
 const LIMIT_KEYS: (keyof PlanLimits)[] = [
@@ -121,6 +122,7 @@ export function SubscriptionPage() {
         </Card>
 
         {isSuperAdmin && <AdminSwitch />}
+        {isSuperAdmin && <StripeConfigCard />}
       </div>
     </div>
   );

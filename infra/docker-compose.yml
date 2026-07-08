@@ -83,8 +83,31 @@ services:
     restart: unless-stopped
     ports: ["127.0.0.1:8090:8090"]
 
+  # whatsmeow WhatsApp-App (personal-account) QR bridge. Manages every device
+  # session in ONE process; the API/worker reach it at http://bridge-wa:8100 on
+  # the compose network (set each account's config.bridge_url to that). Sessions
+  # persist in the bridge-wa-data volume so pairings survive restarts.
+  bridge-wa:
+    build:
+      context: ..
+      dockerfile: infra/bridge-wa.Dockerfile
+    environment:
+      BRIDGE_API_TOKEN: ${BRIDGE_API_TOKEN:-}
+      BRIDGE_STORE_DIR: /data
+      BRIDGE_PUBLIC_URL: http://bridge-wa:8100
+      SMARTCHAT_FILES_BASE: ${SMARTCHAT_FILES_BASE:-${ASSETS_BASE_URL:-}}
+      BRIDGE_LOG_LEVEL: ${BRIDGE_LOG_LEVEL:-INFO}
+    volumes: [bridge-wa-data:/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8100/healthz"]
+      interval: 15s
+      retries: 5
+    ports: ["127.0.0.1:8100:8100"]
+
 volumes:
   pg-data:
   redis-data:
   minio-data:
   embed-models:
+  bridge-wa-data:

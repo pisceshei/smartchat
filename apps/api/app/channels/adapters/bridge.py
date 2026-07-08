@@ -57,15 +57,23 @@ class BridgeAdapter(BaseAdapter):
         secret = credentials.get("bridge_token") or account.config.get("webhook_secret") or ""
         import json as _json
 
+        from ...settings import get_settings
+
         body = _json.dumps({"to": to, "payload": payload}, separators=(",", ":")).encode()
+        headers = {
+            "Content-Type": "application/json",
+            # per-message HMAC (device-scoped secret) …
+            "X-Bridge-Signature": bridge_signature(secret, body),
+        }
+        # … plus the shared bridge API token the Go /send endpoint authenticates on
+        api_token = get_settings().bridge_api_token
+        if api_token:
+            headers["X-Bridge-Auth"] = api_token
         try:
             r = await self.http.post(
                 f"{bridge_url.rstrip('/')}/send",
                 content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Bridge-Signature": bridge_signature(secret, body),
-                },
+                headers=headers,
             )
         except httpx.HTTPError as e:
             return self.network_error(e)

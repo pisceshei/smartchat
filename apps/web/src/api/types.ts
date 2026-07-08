@@ -37,6 +37,40 @@ export interface ChannelAccount {
   created_at: string;
 }
 
+/* --------------------------------------------- whatsapp/line app (QR bridge)
+ * The whatsapp_app / line_app channels pair a personal number through a
+ * whatsmeow bridge (infra/bridge-wa). connect() provisions the device and
+ * returns account_id; the modal then polls .../qr (a QR string to render as an
+ * image) + .../status until the device reports "online". Statuses mirror
+ * device_bridges.status (models/channels.py). */
+export type BridgeDeviceStatus =
+  | "provisioning"
+  | "awaiting_qr"
+  | "connecting"
+  | "pairing"
+  | "online"
+  | "offline"
+  | "logged_out"
+  | "banned";
+
+export interface DeviceAccount {
+  account_id: string;
+  status: BridgeDeviceStatus;
+}
+
+export interface DeviceQr {
+  /** The QR string to render; null once paired or while (re)generating. */
+  qr: string | null;
+  status: BridgeDeviceStatus;
+}
+
+export interface DeviceStatus {
+  status: BridgeDeviceStatus;
+  jid?: string | null;
+  phone?: string | null;
+  pushname?: string | null;
+}
+
 /* ------------------------------------------------------- message content */
 
 export interface TextBlock {
@@ -1158,6 +1192,24 @@ export interface StripeIntent {
 export interface CheckoutResult {
   order: OrderPreview;
   stripe: StripeIntent;
+}
+
+/* --------------------------------------------------- platform stripe config
+ * Super-admin platform payment settings. GET never echoes secrets — it returns
+ * the publishable key (public by nature) plus booleans marking whether each
+ * secret is stored. PUT accepts the raw keys, encrypted server-side at rest;
+ * omitted/blank secret fields leave the stored value unchanged. */
+export interface StripeConfig {
+  publishable_key: string | null;
+  secret_key_set: boolean;
+  webhook_secret_set: boolean;
+  configured: boolean;
+}
+
+export interface StripeConfigUpdate {
+  secret_key?: string;
+  publishable_key?: string;
+  webhook_secret?: string;
 }
 
 export interface PointsTopupResult {

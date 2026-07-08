@@ -42,6 +42,10 @@ _CHANNEL_ALIASES = {
     "telegram": "telegram_bot",
 }
 
+# WhatsApp App / LINE App pair by QR scan (whatsmeow bridge), NOT a token form.
+# They share the connect path but dispatch to modules.devices.service.
+_BRIDGE_CHANNELS = frozenset({"whatsapp_app", "line_app"})
+
 _CONNECTABLE = {
     "widget",
     "telegram_bot",
@@ -51,6 +55,9 @@ _CONNECTABLE = {
     "line_oa",
     "email",
     "whatsapp_bsp",
+    # QR-scan device bridges (routed to the devices QR flow, not the token branch)
+    "whatsapp_app",
+    "line_app",
     # Phase 4 — validated through adapter.connect_validate (see _DISPATCH_TYPES).
     "slack",
     "vk",
@@ -187,6 +194,16 @@ async def connect_account(
     if channel_type not in _CONNECTABLE or channel_type not in registered_channel_types():
         raise HTTPException(422, f"unsupported channel type: {channel_type}")
     await _check_channel_quota(session, member)
+
+    # QR-scan device bridges (whatsapp_app / line_app): no token form — create the
+    # account + device_bridge and start whatsmeow QR login. Returns awaiting_qr
+    # (or pending + a surfaced error when the bridge is offline/unconfigured).
+    if channel_type in _BRIDGE_CHANNELS:
+        from ..devices import service as device_service
+
+        return await device_service.provision_device(
+            session, member, channel_type, name=body.name.strip()
+        )
 
     settings = get_settings()
     webhook_secret = secrets.token_urlsafe(24)
@@ -333,6 +350,12 @@ async def remove_account(
     acct = await session.get(ChannelAccount, account_id)
     if acct is None or acct.workspace_id != member.workspace.id:
         raise HTTPException(404, "account not found")
+    # QR device bridges: best-effort stop + remove the whatsmeow session so the
+    # Go process frees it (never blocks the disable if the bridge is down).
+    if acct.channel_type in _BRIDGE_CHANNELS:
+        from ..devices import service as device_service
+
+        await device_service.teardown_device(session, acct)
     acct.enabled = False
     acct.status = "disconnected"
     session.add(

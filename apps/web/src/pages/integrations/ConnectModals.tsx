@@ -9,12 +9,14 @@
  *   - secrets use Input.Password; conditional credential fields use
  *     preserve={false} so a hidden branch's stale value is never submitted. */
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { Alert, App, Button, Form, Input, InputNumber, Modal, Segmented, Select, Switch } from "antd";
-import type { ReactNode } from "react";
+import { Alert, App, Button, Form, Input, InputNumber, Modal, Result, Segmented, Select, Spin, Switch } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { channelsApi, widgetsApi } from "@/api/endpoints";
-import type { ChannelType } from "@/api/types";
+import { ApiError } from "@/api/client";
+import { channelsApi, devicesApi, widgetsApi } from "@/api/endpoints";
+import type { BridgeDeviceStatus, ChannelType } from "@/api/types";
 import { t } from "@/i18n";
 
 function useConnect(channelType: ChannelType, onDone: () => void) {
@@ -416,6 +418,206 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
         )}
       </Form>
     </ConnectModalShell>
+  );
+}
+
+/* ------------------------------------------- WhatsApp/LINE App — QR bridge */
+
+/** Terminal statuses that stop the poll loop. `online` = paired successfully;
+ *  `logged_out`/`banned` require operator action (the bridge never auto-re-pairs). */
+const BRIDGE_TERMINAL: readonly BridgeDeviceStatus[] = ["online", "logged_out", "banned"];
+
+/** Small under-QR hint per transient status. */
+const BRIDGE_STATUS_HINT: Partial<Record<BridgeDeviceStatus, string>> = {
+  provisioning: t("int.waApp.st.provisioning"),
+  awaiting_qr: t("int.waApp.st.awaitingQr"),
+  connecting: t("int.waApp.st.connecting"),
+  pairing: t("int.waApp.st.pairing"),
+};
+
+/** QR-scan connect flow for personal-number channels (whatsapp_app / line_app).
+ *  On open it provisions a bridge device then polls qr()+status() every 2s,
+ *  rendering the QR string as an image until the device reports "online".
+ *  Handles awaiting_qr/connecting/logged_out/banned with clear messages and a
+ *  「重新產生 QR」 action that restarts the whole flow (safe after logout — it
+ *  provisions a fresh session rather than auto-re-pairing). */
+function QrBridgeConnectModal({
+  open,
+  onClose,
+  channelType,
+  title,
+}: ModalProps & { channelType: ChannelType; title: string }) {
+  const qc = useQueryClient();
+  const { message } = App.useApp();
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [qr, setQr] = useState<string | null>(null);
+  const [status, setStatus] = useState<BridgeDeviceStatus | null>(null);
+  const [info, setInfo] = useState<{ phone?: string | null; pushname?: string | null }>({});
+  const [err, setErr] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const doneRef = useRef(false);
+  // Keep the latest onClose without re-subscribing the poll effect (the parent
+  // passes a fresh closure each render).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  const stop = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const start = useCallback(async () => {
+    stop();
+    doneRef.current = false;
+    setAccountId(null);
+    setQr(null);
+    setStatus(null);
+    setInfo({});
+    setErr(null);
+    setStarting(true);
+    try {
+      const acct = await devicesApi.connect(channelType, {});
+      if (!acct.account_id) throw new Error("missing account id");
+      setStatus(acct.status);
+      setAccountId(acct.account_id);
+    } catch (e) {
+      const detail = e instanceof ApiError && e.message ? e.message : null;
+      setErr(detail ?? t("int.waApp.startFailed"));
+    } finally {
+      setStarting(false);
+    }
+  }, [channelType, stop]);
+
+  // (re)start when the modal opens; tear down the loop when it closes.
+  useEffect(() => {
+    if (open) void start();
+    return () => stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Poll qr + status in parallel once we have an account id.
+  useEffect(() => {
+    if (!accountId || !open) return;
+    let cancelled = false;
+    const tick = async () => {
+      const [qrRes, stRes] = await Promise.allSettled([
+        devicesApi.qr(channelType, accountId),
+        devicesApi.status(channelType, accountId),
+      ]);
+      if (cancelled) return;
+      let next: BridgeDeviceStatus | null = null;
+      if (qrRes.status === "fulfilled") {
+        setQr(qrRes.value.qr);
+        next = qrRes.value.status ?? next;
+      }
+      if (stRes.status === "fulfilled") {
+        next = stRes.value.status ?? next;
+        setInfo({ phone: stRes.value.phone, pushname: stRes.value.pushname });
+      }
+      if (next) setStatus(next);
+      if (next && BRIDGE_TERMINAL.includes(next) && !doneRef.current) {
+        doneRef.current = true;
+        stop();
+        if (next === "online") {
+          setQr(null);
+          void qc.invalidateQueries({ queryKey: ["channel-accounts"] });
+          message.success(t("int.waApp.onlineToast"));
+          window.setTimeout(() => {
+            if (!cancelled) onCloseRef.current();
+          }, 1800);
+        }
+      }
+    };
+    void tick();
+    timerRef.current = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [accountId, open, channelType, qc, message, stop]);
+
+  const online = status === "online";
+  const banned = status === "banned";
+  const loggedOut = status === "logged_out";
+  const statusHint = status ? BRIDGE_STATUS_HINT[status] : undefined;
+
+  return (
+    <Modal
+      title={title}
+      open={open}
+      onCancel={onClose}
+      destroyOnHidden
+      width={420}
+      footer={
+        online ? (
+          <Button type="primary" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+        ) : (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <Button onClick={onClose}>{t("common.cancel")}</Button>
+            <Button type="primary" loading={starting} onClick={() => void start()}>
+              {t("int.waApp.regen")}
+            </Button>
+          </div>
+        )
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "4px 0" }}>
+        {!online && (
+          <Alert
+            type="warning"
+            showIcon
+            message={t("int.waApp.banRisk")}
+            style={{ width: "100%" }}
+          />
+        )}
+        {online ? (
+          <Result
+            style={{ padding: "16px 0" }}
+            status="success"
+            title={t("int.waApp.online")}
+            subTitle={
+              [info.pushname, info.phone].filter(Boolean).join(" · ") || t("int.waApp.onlineSub")
+            }
+          />
+        ) : err ? (
+          <Alert type="error" showIcon message={t("int.waApp.startFailed")} description={err} style={{ width: "100%" }} />
+        ) : banned ? (
+          <Alert type="error" showIcon message={t("int.waApp.banned")} style={{ width: "100%" }} />
+        ) : loggedOut ? (
+          <Alert type="warning" showIcon message={t("int.waApp.loggedOut")} style={{ width: "100%" }} />
+        ) : qr ? (
+          <>
+            <div style={{ background: "#fff", padding: 12, borderRadius: 10, lineHeight: 0 }}>
+              <QRCodeSVG value={qr} size={220} level="M" marginSize={2} />
+            </div>
+            <div style={{ textAlign: "center", color: "var(--sc-text-secondary)", fontSize: 13, lineHeight: 1.7 }}>
+              {t("int.waApp.scanHint")}
+            </div>
+            {statusHint && (
+              <div style={{ fontSize: 12, color: "var(--sc-text-tertiary)" }}>{statusHint}</div>
+            )}
+          </>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "28px 0" }}>
+            <Spin />
+            <div style={{ color: "var(--sc-text-secondary)", fontSize: 13 }}>
+              {starting ? t("int.waApp.starting") : statusHint ?? t("int.waApp.waitingQr")}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+export function WhatsAppAppConnectModal({ open, onClose }: ModalProps) {
+  return (
+    <QrBridgeConnectModal open={open} onClose={onClose} channelType="whatsapp_app" title="WhatsApp App" />
   );
 }
 

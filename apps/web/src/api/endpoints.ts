@@ -28,10 +28,14 @@ import type {
   ApiTokenInfo,
   AuditEntry,
   AuthResponse,
+  BridgeDeviceStatus,
   ChannelAccount,
   ChannelIdentity,
   ChannelType,
   Contact,
+  DeviceAccount,
+  DeviceQr,
+  DeviceStatus,
   ConversationSettings,
   Conversation,
   ConversationTranslateConfig,
@@ -91,6 +95,8 @@ import type {
   SegmentDefinition,
   SegmentMode,
   ServiceOverviewReport,
+  StripeConfig,
+  StripeConfigUpdate,
   SmsSignature,
   SplitLink,
   SplitLinkClickStats,
@@ -351,6 +357,36 @@ export const channelsApi = {
   connect: (channelType: ChannelType, body: Record<string, unknown>) =>
     http<ChannelAccount>("POST", `/channels/${channelType}/accounts`, { body }),
   removeAccount: (id: string) => http<void>("DELETE", `/channels/accounts/${id}`),
+};
+
+/* ------------------------------------------- whatsapp/line app (QR bridge) */
+
+/** QR-scan device provisioning for the whatsapp_app / line_app channels.
+ *  `connect()` creates the bridge device (returns account_id — tolerant of the
+ *  serializer emitting either account_id or id); the modal then polls `qr()` +
+ *  `status()` every ~2s until status === "online". These routes are served by
+ *  the QR-flow branch in channels/router.py backed by the bridge-wa service —
+ *  callers must degrade gracefully (a 404/501 surfaces while the bridge is not
+ *  yet deployed). */
+export const devicesApi = {
+  connect: async (
+    channelType: ChannelType,
+    body: Record<string, unknown> = {},
+  ): Promise<DeviceAccount> => {
+    const res = await http<Record<string, unknown>>(
+      "POST",
+      `/channels/${channelType}/accounts`,
+      { body },
+    );
+    return {
+      account_id: String(res.account_id ?? res.id ?? ""),
+      status: (res.status as BridgeDeviceStatus) ?? "provisioning",
+    };
+  },
+  qr: (channelType: ChannelType, accountId: string) =>
+    http<DeviceQr>("GET", `/channels/${channelType}/${accountId}/qr`),
+  status: (channelType: ChannelType, accountId: string) =>
+    http<DeviceStatus>("GET", `/channels/${channelType}/${accountId}/status`),
 };
 
 /* --------------------------------------------------------------- widgets */
@@ -887,6 +923,15 @@ export const billingApi = {
     duration_days: CheckoutDuration;
     addons: Partial<SubscriptionAddons>;
   }) => http<Subscription>("POST", "/billing/admin/change-plan", { body }),
+
+  /** super_admin-only platform Stripe key management. GET returns the
+   *  publishable key + booleans (never the secrets); PUT stores the raw keys
+   *  encrypted server-side. Once saved, checkout uses the live key. */
+  stripeConfig: {
+    get: () => http<StripeConfig>("GET", "/billing/stripe-config"),
+    save: (body: StripeConfigUpdate) =>
+      http<StripeConfig>("PUT", "/billing/stripe-config", { body }),
+  },
 };
 
 /** Client-side order estimate for the live 訂單預覽 while the user adjusts the

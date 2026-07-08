@@ -59,7 +59,18 @@ class Settings(BaseSettings):
     embed_dim: int = 1024
     embed_timeout_s: float = 30.0
 
+    # --- WhatsApp App / LINE App device bridge (whatsmeow Go sidecar) ---
+    # One Go process manages many device sessions on :8100 (compose-internal),
+    # authenticated with the shared X-Bridge-Auth: <bridge_api_token> header.
+    # Empty bridge_wa_url ⇒ QR provisioning is disabled: connect still creates the
+    # account but degrades to status "pending" with a clear error (no crash).
+    bridge_wa_url: str = ""
+    bridge_api_token: str = ""
+
     # --- Stripe billing (P3). Empty secret key ⇒ billing disabled (no crash). ---
+    # These env values are the FALLBACK; a platform super-admin can override them
+    # at runtime via /api/v1/billing/stripe-config (stored encrypted in
+    # platform_settings, DB-first in services/stripe_client.get_stripe).
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""

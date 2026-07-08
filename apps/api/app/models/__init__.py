@@ -100,6 +100,7 @@ from .misc import (
     WebhookDelivery,
     WebhookSubscription,
 )
+from .platform import PlatformSettings
 from .reports import (
     AgentPresenceSession,
     AggAdsDaily,
@@ -235,4 +236,6 @@ __all__ = [
     "BillingOrder",
     "StripeEvent",
     "Invoice",
+    # platform (super-admin, tenant-agnostic)
+    "PlatformSettings",
 ]
