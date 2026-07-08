@@ -28,8 +28,11 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `https://183.178.215.103:38682/xterm` (user-authorized). Also runs Odoo 19,
   the `collect` tool, Typesense (separate box), etc. — don't disturb those.
 - **Project dir**: `/root/smartchat` (git clone of `github.com/pisceshei/smartchat`, branch `main`).
-- **Stack**: Docker Compose (`infra/docker-compose.yml`), 15 services:
-  postgres redis minio · api ws-gateway worker beat flow-engine **ai-agent** edge web · embed bridge-wa.
+- **Stack**: Docker Compose (`infra/docker-compose.yml`), 16 services:
+  postgres redis minio · api ws-gateway worker beat flow-engine **channel-ingress**
+  **ai-agent** edge web · embed bridge-wa. channel-ingress = the blocking
+  ingress:* stream consumer (webhook inbound lands in ms; without it inbound
+  waits for the worker's 15s drain cron — the "inbox is 10-15s late" symptom).
   All app ports bound to `127.0.0.1`; the BaoTa nginx site is the public edge.
 - **Secrets**: `/root/smartchat/.env` (hand-written; NOT in git). Contains DB/MINIO
   passwords, `SECRET_KEY`, `CREDENTIALS_MASTER_KEY` (**never change**), sub2api

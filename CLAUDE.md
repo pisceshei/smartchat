@@ -20,7 +20,7 @@ state (what's deployed, known bugs, roadmap, every gotcha) is in
 3. **Each backend service has its own image** (`smartchat-api`, `-worker`,
    `-ai-agent`, `-ws-gateway`, `-beat`, `-flow-engine`, `-edge`). Rebuilding
    `api` does NOT rebuild the others — after a backend change rebuild them all:
-   `dc build api ws-gateway worker beat flow-engine ai-agent edge`.
+   `dc build api ws-gateway worker beat flow-engine channel-ingress ai-agent edge`.
 4. **Frontend `dist/` is gitignored** — built inside Docker (widget in the api
    image's node stage; admin SPA in the `web` nginx image). Rebuild `web` after
    any `apps/web` change, `api` after any `apps/widget` change.

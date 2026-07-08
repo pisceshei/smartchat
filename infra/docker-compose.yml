@@ -64,6 +64,14 @@ services:
     <<: *backend
     command: python -m apps.flow_engine.runtime
 
+  # 渠道入站 consumer — blocking tail on every ingress:{channel} stream so
+  # webhook inbound (WhatsApp/Telegram/Meta/...) reaches the inbox within
+  # milliseconds. Without it the only consumer is the worker's 15s drain cron
+  # (= a visible 10-15s inbox delay). The cron stays as the safety net.
+  channel-ingress:
+    <<: *backend
+    command: python -m apps.api.app.channels.ingress_consumer
+
   # AI 成員自動接待 consumer (group ai-agent on events:conversation) — replies
   # on handler=ai_agent conversations and pauses AI when a human interjects.
   ai-agent:
