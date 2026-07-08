@@ -32,6 +32,7 @@ from ...models.contacts import (
     ContactOrder,
 )
 from ...models.conversations import Conversation
+from ...models.members import WorkspaceMember
 from ...models.misc import (
     AuditLog,
     ContactTag,
@@ -87,6 +88,20 @@ class IdentityOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ContactListItemOut(ContactOut):
+    """List row = flat contact + the enrichments the 客戶 table renders
+    (渠道 icons / 標籤 / 接待成員 / ONE ID / 最後活躍). The SPA reads these
+    keys directly — omitting them once crashed the whole page (locked in by
+    tests/contacts/test_query_contract.py)."""
+
+    channel_identities: list[IdentityOut] = Field(default_factory=list)
+    tags: list[TagOut] = Field(default_factory=list)
+    one_id: uuid.UUID | None = None
+    assignee_member_id: uuid.UUID | None = None
+    assignee_name: str | None = None
+    last_active_at: datetime | None = None
+
+
 class ContactCreateIn(BaseModel):
     display_name: str = Field(default="", max_length=128)
     remark_name: str | None = Field(default=None, max_length=128)
@@ -132,7 +147,7 @@ class ContactQueryIn(BaseModel):
 
 
 class ContactListOut(BaseModel):
-    items: list[ContactOut]
+    items: list[ContactListItemOut]
     total: int
     limit: int
     offset: int
@@ -840,8 +855,64 @@ async def _run_query(
             .offset(body.offset)
         )
     ).scalars().all()
+    ids = [c.id for c in rows]
+
+    # page-scoped batch enrichment (three IN-queries — never per-row N+1):
+    # channel identities, contact tags and the latest conversation's assignee.
+    idents_by_contact: dict[uuid.UUID, list[IdentityOut]] = {}
+    tags_by_contact: dict[uuid.UUID, list[TagOut]] = {}
+    assignee_by_contact: dict[uuid.UUID, tuple[uuid.UUID | None, str | None]] = {}
+    if ids:
+        for ident in (
+            await session.execute(
+                select(ChannelIdentity)
+                .where(ChannelIdentity.contact_id.in_(ids))
+                .order_by(ChannelIdentity.last_seen_at.desc().nulls_last())
+            )
+        ).scalars():
+            idents_by_contact.setdefault(ident.contact_id, []).append(
+                IdentityOut.model_validate(ident)
+            )
+        for contact_id, tag in (
+            await session.execute(
+                select(ContactTag.contact_id, Tag)
+                .join(Tag, Tag.id == ContactTag.tag_id)
+                .where(ContactTag.contact_id.in_(ids))
+                .order_by(Tag.name)
+            )
+        ).all():
+            tags_by_contact.setdefault(contact_id, []).append(TagOut.model_validate(tag))
+        for contact_id, member_id, member_name in (
+            await session.execute(
+                select(
+                    Conversation.contact_id,
+                    Conversation.assignee_member_id,
+                    WorkspaceMember.display_name,
+                )
+                .outerjoin(WorkspaceMember, WorkspaceMember.id == Conversation.assignee_member_id)
+                .where(Conversation.contact_id.in_(ids))
+                .distinct(Conversation.contact_id)
+                .order_by(
+                    Conversation.contact_id,
+                    Conversation.last_message_at.desc().nulls_last(),
+                )
+            )
+        ).all():
+            assignee_by_contact[contact_id] = (member_id, member_name or None)
+
+    items: list[ContactListItemOut] = []
+    for c in rows:
+        item = ContactListItemOut.model_validate(c)
+        item.channel_identities = idents_by_contact.get(c.id, [])
+        item.tags = tags_by_contact.get(c.id, [])
+        item.one_id = c.id
+        assignee = assignee_by_contact.get(c.id)
+        if assignee is not None:
+            item.assignee_member_id, item.assignee_name = assignee
+        item.last_active_at = c.last_seen_at
+        items.append(item)
     return ContactListOut(
-        items=[ContactOut.model_validate(c) for c in rows],
+        items=items,
         total=int(total),
         limit=body.limit,
         offset=body.offset,

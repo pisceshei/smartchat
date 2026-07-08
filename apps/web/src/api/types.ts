@@ -305,8 +305,10 @@ export interface Contact {
   browser?: string | null;
   custom: Record<string, unknown>;
   is_blacklisted: boolean;
-  tags: Tag[];
-  channel_identities: ChannelIdentity[];
+  /** optional on the wire — the API client normalizes to [] (a bare read of
+   *  these once crashed the whole customers page) */
+  tags?: Tag[];
+  channel_identities?: ChannelIdentity[];
   assignee_member_id?: string | null;
   assignee_name?: string | null;
   one_id?: string | null;

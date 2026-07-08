@@ -19,10 +19,12 @@ import { CHANNEL_CATALOG } from "@/constants/channels";
 import { t } from "@/i18n";
 import { useInboxSummary, useInboxViews } from "./hooks";
 
+// AI 成員 leads the list and is the inbox default (AI-first reception is the
+// product's primary workflow) — keep in sync with InboxPage's initial tab.
 const SYSTEM_TABS: { key: InboxTab; labelKey: Parameters<typeof t>[0]; icon: React.ReactNode }[] = [
+  { key: "ai", labelKey: "inbox.tab.ai", icon: <ApartmentOutlined /> },
   { key: "mine", labelKey: "inbox.tab.mine", icon: <UserOutlined /> },
   { key: "bot", labelKey: "inbox.tab.bot", icon: <RobotOutlined /> },
-  { key: "ai", labelKey: "inbox.tab.ai", icon: <ApartmentOutlined /> },
   { key: "unassigned", labelKey: "inbox.tab.unassigned", icon: <UserSwitchOutlined /> },
   { key: "all", labelKey: "inbox.tab.all", icon: <InboxOutlined /> },
   { key: "team", labelKey: "inbox.tab.team", icon: <TeamOutlined /> },

@@ -15,7 +15,8 @@ export function InboxPage() {
   const navigate = useNavigate();
   const { conversationId } = useParams<{ conversationId: string }>();
 
-  const [tab, setTab] = useState<InboxTab>("mine");
+  // AI 成員 is the default landing view — keep in sync with ViewsSidebar order.
+  const [tab, setTab] = useState<InboxTab>("ai");
   const [viewId, setViewId] = useState<string | undefined>(undefined);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<InboxListFilter>("all");

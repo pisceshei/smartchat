@@ -147,16 +147,19 @@ export function CustomersPage() {
         title: t("cust.col.channels"),
         key: "channels",
         width: 140,
-        render: (_, c) => (
-          <span style={{ display: "inline-flex", gap: 4 }}>
-            {c.channel_identities.slice(0, 5).map((ci) => (
-              <ChannelIcon key={ci.id} type={ci.channel_type} size={16} />
-            ))}
-            {c.channel_identities.length > 5 && (
-              <Badge count={`+${c.channel_identities.length - 5}`} color="var(--sc-text-tertiary)" />
-            )}
-          </span>
-        ),
+        render: (_, c) => {
+          const idents = c.channel_identities ?? [];
+          return (
+            <span style={{ display: "inline-flex", gap: 4 }}>
+              {idents.slice(0, 5).map((ci) => (
+                <ChannelIcon key={ci.id} type={ci.channel_type} size={16} />
+              ))}
+              {idents.length > 5 && (
+                <Badge count={`+${idents.length - 5}`} color="var(--sc-text-tertiary)" />
+              )}
+            </span>
+          );
+        },
       },
       assignee: {
         title: t("cust.col.assignee"),
@@ -174,16 +177,19 @@ export function CustomersPage() {
         title: t("cust.col.tags"),
         key: "tags",
         width: 180,
-        render: (_, c) => (
-          <span>
-            {c.tags.slice(0, 3).map((tg) => (
-              <Tag key={tg.id} color={tg.color} style={{ fontSize: 11 }}>
-                {tg.name}
-              </Tag>
-            ))}
-            {c.tags.length > 3 && <Tag style={{ fontSize: 11 }}>+{c.tags.length - 3}</Tag>}
-          </span>
-        ),
+        render: (_, c) => {
+          const tags = c.tags ?? [];
+          return (
+            <span>
+              {tags.slice(0, 3).map((tg) => (
+                <Tag key={tg.id} color={tg.color} style={{ fontSize: 11 }}>
+                  {tg.name}
+                </Tag>
+              ))}
+              {tags.length > 3 && <Tag style={{ fontSize: 11 }}>+{tags.length - 3}</Tag>}
+            </span>
+          );
+        },
       },
       last_active: {
         title: t("cust.col.lastActive"),

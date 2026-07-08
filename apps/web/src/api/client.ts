@@ -126,6 +126,52 @@ export async function http<T>(
   return (await res.json()) as T;
 }
 
+/** Like http() but returns the raw response body as a Blob — for endpoints
+ *  that stream files (e.g. POST /contacts/export → text/csv). Same auth
+ *  headers, single-flight refresh retry and ApiError semantics. */
+export async function httpBlob(
+  method: "GET" | "POST",
+  path: string,
+  opts: RequestOptions = {},
+): Promise<Blob> {
+  const doFetch = () => {
+    const { token, workspaceId } = useAuthStore.getState();
+    const headers: Record<string, string> = { ...opts.headers };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+    let body: BodyInit | undefined;
+    if (opts.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(opts.body);
+    }
+    return fetch(`${API_BASE}${path}${buildQuery(opts.query)}`, {
+      method,
+      headers,
+      body,
+      signal: opts.signal,
+    });
+  };
+
+  let res = await doFetch();
+  if (res.status === 401 && useAuthStore.getState().token && !path.startsWith("/auth/")) {
+    if (await tryRefresh()) res = await doFetch();
+  }
+  if (!res.ok) {
+    let errBody: unknown = null;
+    try {
+      errBody = await res.json();
+    } catch {
+      /* non-json error body */
+    }
+    const detail =
+      errBody && typeof errBody === "object" && "detail" in errBody
+        ? String((errBody as { detail: unknown }).detail)
+        : undefined;
+    throw new ApiError(res.status, errBody, detail);
+  }
+  return res.blob();
+}
+
 /** WebSocket URL for the realtime gateway. The gateway serves /ws/agent at
  * the ROOT (a separate service in prod, reverse-proxied by nginx; a vite
  * proxy forwards /ws in dev). VITE_WS_BASE overrides for split hosts. */

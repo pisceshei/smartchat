@@ -1,6 +1,6 @@
 /** Generated-style typed endpoints matching the backend module routes
  *  (apps/api/app/modules/*). One namespace per backend module. */
-import { API_BASE, http } from "./client";
+import { API_BASE, http, httpBlob } from "./client";
 import { useAuthStore } from "@/stores/auth";
 import type {
   AiAgent,
@@ -254,6 +254,41 @@ export const inboxApi = {
 
 /* -------------------------------------------------------------- contacts */
 
+/** UI filter grammar → backend Predicate grammar. The drawer speaks
+ *  empty/not_empty + tag/is_blacklisted/assignee; the backend speaks
+ *  not_exists/exists + tag_id/blacklisted/assignee_member_id — sending the
+ *  UI names raw gets a 422. */
+const PREDICATE_OP_MAP: Record<string, string> = {
+  empty: "not_exists",
+  not_empty: "exists",
+};
+const PREDICATE_FIELD_MAP: Record<string, string> = {
+  tag: "tag_id",
+  is_blacklisted: "blacklisted",
+  assignee: "assignee_member_id",
+};
+
+function toBackendPredicates(filters?: FilterPredicate[]): Record<string, unknown>[] {
+  return (filters ?? []).map((f) => ({
+    field: PREDICATE_FIELD_MAP[f.field] ?? f.field,
+    op: PREDICATE_OP_MAP[f.op] ?? f.op,
+    value: f.value ?? null,
+  }));
+}
+
+/** The list endpoint returns flat rows; older builds omitted the array
+ *  fields entirely, which crashed the customers table (undefined.slice).
+ *  Normalize here exactly like get() does so the UI never sees undefined. */
+function normalizeContact(it: Contact & { last_seen_at?: string | null }): Contact {
+  return {
+    ...it,
+    channel_identities: it.channel_identities ?? [],
+    tags: it.tags ?? [],
+    one_id: it.one_id ?? it.id,
+    last_active_at: it.last_active_at ?? it.last_seen_at ?? null,
+  };
+}
+
 export const contactsApi = {
   list: async (params: {
     page?: number;
@@ -269,14 +304,19 @@ export const contactsApi = {
       {
         body: {
           q: params.q || null,
-          predicates: params.filters ?? [],
+          predicates: toBackendPredicates(params.filters),
           logic: "and",
           limit: pageSize,
           offset: (page - 1) * pageSize,
         },
       },
     );
-    return { items: res.items, total: res.total, page, page_size: pageSize };
+    return {
+      items: (res.items ?? []).map(normalizeContact),
+      total: res.total,
+      page,
+      page_size: pageSize,
+    };
   },
   /** Backend returns a 360 wrapper {contact, identities, tags, orders,
    * conversations, merge_history, ...}. Flatten it to the UI's Contact shape
@@ -310,8 +350,25 @@ export const contactsApi = {
     http<void>("POST", `/contacts/merge-candidates/${candidateId}/dismiss`),
   activities: (id: string) => http<AuditEntry[]>("GET", `/contacts/${id}/activities`),
   orders: (id: string) => http<OrderBrief[]>("GET", `/contacts/${id}/orders`),
-  export: (params: { q?: string; filters?: FilterPredicate[] }) =>
-    http<{ task_id: string }>("POST", "/contacts/export", { body: params }),
+  /** Backend streams text/csv directly (no task envelope) — fetch the blob
+   *  and trigger a browser download. */
+  export: async (params: { q?: string; filters?: FilterPredicate[] }): Promise<void> => {
+    const blob = await httpBlob("POST", "/contacts/export", {
+      body: {
+        q: params.q || null,
+        predicates: toBackendPredicates(params.filters),
+        logic: "and",
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   conversations: (id: string) => http<Conversation[]>("GET", `/contacts/${id}/conversations`),
 };
 

@@ -68,7 +68,7 @@ export function ContactDrawer({
                 )}
               </div>
               <div style={{ marginTop: 6 }}>
-                {c.tags.map((tg) => (
+                {(c.tags ?? []).map((tg) => (
                   <Tag key={tg.id} color={tg.color} style={{ fontSize: 11 }}>
                     {tg.name}
                   </Tag>
@@ -108,10 +108,10 @@ export function ContactDrawer({
                 label: t("cust.detail.identities"),
                 children: (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {c.channel_identities.length === 0 ? (
+                    {(c.channel_identities ?? []).length === 0 ? (
                       <EmptyState compact icon={<CommentOutlined />} title={t("common.emptyData")} />
                     ) : (
-                      c.channel_identities.map((ci) => (
+                      (c.channel_identities ?? []).map((ci) => (
                         <div
                           key={ci.id}
                           style={{
