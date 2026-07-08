@@ -937,15 +937,50 @@ async def set_managed(
     conversation_id: uuid.UUID,
     managed: bool,
     actor: Actor,
+    redis: aioredis.Redis | None = None,
 ) -> RouteResult:
+    """託管 toggle — the single switch for AI reception. OFF is a hard stop
+    (ai_state='off', which is also what the UI derives the toggle from). ON
+    re-attaches an eligible AI member when the conversation was previously
+    handed off or human-assigned, so flipping the toggle back actually resumes
+    AI replies instead of only setting a flag no consumer reads."""
     conversation = await _lock_conversation(session, workspace_id, conversation_id)
     if conversation is None:
         raise LookupError("conversation not found")
     conversation.bot_managed = managed
-    if conversation.handler == "ai_agent":
-        conversation.ai_state = "managed" if managed else "paused_human"
-    elif not managed:
+    if not managed:
         conversation.ai_state = "off"
+    elif conversation.handler == "ai_agent":
+        conversation.ai_state = "managed"
+    elif redis is not None:
+        candidates = await _gather_ai_candidates(session, redis, workspace_id)
+        chosen = pick_ai(candidates)
+        if chosen is not None:
+            from_handler = conversation.handler
+            from_member = conversation.assignee_member_id
+            if (
+                from_member is not None
+                and from_handler in ("member", "ai_agent")
+                and from_member != chosen.member_id
+            ):
+                await cap_decr(redis, from_member)
+            if chosen.member_id != from_member:
+                await cap_incr(redis, chosen.member_id)
+            conversation.handler = "ai_agent"
+            conversation.assignee_member_id = chosen.member_id
+            conversation.ai_state = "managed"
+            _audit_assignment(
+                session,
+                conversation,
+                from_handler=from_handler,
+                from_member_id=from_member,
+                to_handler="ai_agent",
+                to_member_id=chosen.member_id,
+                reason="managed_toggle",
+                actor=actor,
+            )
+        # no eligible AI member → leave handler/ai_state untouched: the
+        # refetched conversation shows the toggle still off, which is the truth.
     ev = messaging._conversation_event(conversation, actor)
     await event_bus.emit(session, ev)
     return RouteResult(

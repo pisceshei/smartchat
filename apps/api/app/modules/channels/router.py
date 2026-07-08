@@ -257,6 +257,23 @@ async def connect_account(
         external_id = str(me["id"])
         name = name or (me.get("username") or f"bot {external_id}")
         health_detail = {"username": me.get("username")}
+        # duplicate check BEFORE setWebhook: connecting an already-active bot
+        # must 409 with NO side effects — calling setWebhook first used to
+        # rotate Telegram's registered secret to one that was never persisted,
+        # silently black-holing all inbound (the hooks router 200s unmatched
+        # secrets so Telegram never retries).
+        dup_early = (
+            await session.execute(
+                select(ChannelAccount).where(
+                    ChannelAccount.channel_type == channel_type,
+                    ChannelAccount.external_id == external_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if dup_early is not None and (
+            dup_early.enabled or dup_early.workspace_id != member.workspace.id
+        ):
+            raise HTTPException(409, "this account is already connected")
         hook_url = f"{settings.public_base_url}/hooks/telegram/{webhook_secret}"
         if not await adapter.set_webhook(token, hook_url, webhook_secret):
             raise HTTPException(502, "telegram setWebhook failed")

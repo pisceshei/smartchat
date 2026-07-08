@@ -712,6 +712,7 @@ async def set_managed(
             conversation_id=conversation_id,
             managed=body.managed,
             actor=Actor(type="member", id=member.member_id),
+            redis=get_redis(),
         )
     except LookupError as e:
         raise HTTPException(404, detail=str(e)) from e

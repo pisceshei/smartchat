@@ -37,10 +37,12 @@ interface RequestOptions {
 }
 
 /** Single-flight refresh — concurrent 401s share one POST /auth/refresh.
- *  Resolves true when the store now holds a fresh token pair. */
+ *  Resolves true when the store now holds a fresh token pair. Exported for the
+ *  WS client: a 4401 close (expired access token) triggers the same flow, and
+ *  the store update restarts the socket with the fresh token. */
 let refreshInFlight: Promise<boolean> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
+export async function tryRefresh(): Promise<boolean> {
   const { refreshToken } = useAuthStore.getState();
   if (!refreshToken) return false;
   refreshInFlight ??= (async () => {

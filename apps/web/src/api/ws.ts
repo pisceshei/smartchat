@@ -5,8 +5,12 @@
  *  - heartbeat ping + exponential backoff reconnect
  *  Uplink NEVER goes through the socket (REST POST only); we only send
  *  lightweight ping/typing frames. */
-import { wsUrl } from "./client";
+import { useAuthStore } from "@/stores/auth";
+import { tryRefresh, wsUrl } from "./client";
 import type { WsEnvelope } from "./types";
+
+/** Gateway close code for a bad/expired access token (see gateway.py). */
+const CLOSE_BAD_TOKEN = 4401;
 
 export type WsStatus = "connecting" | "online" | "offline";
 
@@ -81,8 +85,13 @@ export class RealtimeClient {
 
   private open(): void {
     this.emitStatus("connecting");
+    // Always connect with the FRESHEST access token — the one captured at
+    // start() goes stale after the 30-min TTL and every reconnect with it
+    // would 4401 forever (realtime dead until a manual refresh).
+    const liveToken = useAuthStore.getState().token ?? this.token;
+    this.token = liveToken;
     const url = wsUrl({
-      token: this.token,
+      token: liveToken,
       workspace_id: this.workspaceId,
       ...(this.lastSeq > 0 ? { resume_from: this.lastSeq } : {}),
     });
@@ -115,6 +124,15 @@ export class RealtimeClient {
         this.resyncHandlers.forEach((fn) => fn());
         return;
       }
+      // Normalize the gateway wire frame ({event_id, data}) to the envelope
+      // shape handlers read ({id, payload, conversation_id}) — this drift once
+      // silently froze every cache update AND the id-based dedupe below.
+      const anyEvt = evt as unknown as Record<string, unknown>;
+      evt.id ??= anyEvt["event_id"] as string | undefined;
+      evt.payload ??= (anyEvt["data"] as Record<string, unknown> | undefined) ?? {};
+      evt.conversation_id ??=
+        (evt.payload?.["conversation_id"] as string | undefined) ?? undefined;
+      evt.contact_id ??= (evt.payload?.["contact_id"] as string | undefined) ?? undefined;
       if (typeof evt.seq === "number" && evt.seq > this.lastSeq) this.lastSeq = evt.seq;
       if (evt.id) {
         if (this.seen.has(evt.id)) return;
@@ -128,11 +146,17 @@ export class RealtimeClient {
       this.eventHandlers.forEach((fn) => fn(evt));
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.clearHeartbeat();
       this.ws = null;
       if (!this.stopped) {
         this.emitStatus("offline");
+        if (ev.code === CLOSE_BAD_TOKEN) {
+          // expired access token: refresh first — the store update restarts
+          // the client via useRealtime's effect; the backoff reconnect below
+          // is only the fallback if refresh fails/no-ops.
+          void tryRefresh();
+        }
         this.scheduleReconnect();
       }
     };

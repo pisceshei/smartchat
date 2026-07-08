@@ -122,6 +122,8 @@ export class Realtime {
         type?: string;
         seq?: number;
         event?: WidgetEvent;
+        payload?: Record<string, unknown>;
+        data?: Record<string, unknown>;
       };
       try {
         frame = JSON.parse(String(ev.data));
@@ -132,6 +134,20 @@ export class Realtime {
         if (frame.seq <= this.seq) return; // duplicate on resume — drop
         this.seq = frame.seq;
         this.opts.onEvent(frame.seq, frame.event);
+      } else if (frame.type && frame.type.indexOf(".") >= 0) {
+        // canonical gateway frame: {type:"message.created", seq, payload|data}
+        // (the wrapped {"type":"event",event:{...}} shape above is legacy).
+        const event: WidgetEvent = {
+          type: frame.type,
+          payload: frame.payload ?? frame.data ?? {},
+        };
+        if (typeof frame.seq === "number") {
+          if (frame.seq <= this.seq) return; // duplicate on resume — drop
+          this.seq = frame.seq;
+          this.opts.onEvent(frame.seq, event);
+        } else {
+          this.opts.onEvent(this.seq, event); // ephemeral (typing/presence)
+        }
       } else if (frame.type === "resync_required") {
         this.opts.onResync();
       } else if (frame.type === "hello" && typeof frame.seq === "number") {

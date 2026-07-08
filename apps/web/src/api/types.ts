@@ -584,12 +584,17 @@ export interface FileRef {
 
 export interface WsEnvelope {
   seq?: number;
-  id: string;
+  /** normalized by the WS client from `event_id` when absent */
+  id?: string;
+  event_id?: string;
   type: string;
+  ts?: string;
   workspace_id?: string;
   conversation_id?: string | null;
   contact_id?: string | null;
-  payload: Record<string, unknown>;
+  /** normalized by the WS client from `data` when absent */
+  payload?: Record<string, unknown>;
+  data?: Record<string, unknown>;
 }
 
 export interface FilterPredicate {

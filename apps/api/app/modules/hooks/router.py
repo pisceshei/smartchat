@@ -163,7 +163,14 @@ async def telegram_webhook(
 ) -> dict:
     acct = await _account_by_secret(session, ["telegram_bot"], webhook_secret)
     if acct is None or not acct.enabled:
-        log.warning("unmatched telegram webhook secret=%s…", webhook_secret[:6])
+        # still 200 so Telegram doesn't disable the webhook, but this is a
+        # message black hole (stale/rotated secret or disabled account) —
+        # make it impossible to miss in the logs.
+        log.error(
+            "telegram webhook DROPPED: secret=%s… matches no enabled account "
+            "(stale setWebhook registration or account disabled — reconnect "
+            "the bot to re-register)", webhook_secret[:6],
+        )
         return {"ok": True}
     header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
     if header is not None and header != webhook_secret:

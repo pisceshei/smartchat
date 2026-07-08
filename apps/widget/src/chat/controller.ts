@@ -258,10 +258,31 @@ async function resyncHistory(): Promise<void> {
 
 let agentTypingTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Prefer the nested `message`; otherwise rebuild from the flat event fields
+ *  the backend messaging service publishes (message_id/sender_type/content). */
+function messageFromPayload(payload: Record<string, unknown>): WireMessage | undefined {
+  const nested = payload["message"] as WireMessage | undefined;
+  if (nested && nested.id) return nested;
+  const id = payload["message_id"] as string | undefined;
+  const content = payload["content"] as WireMessage["content"] | undefined;
+  if (!id || !content) return undefined;
+  if (payload["is_note"] === true) return undefined; // internal notes stay agent-only
+  return {
+    id,
+    conversation_id: (payload["conversation_id"] as string | null) ?? null,
+    sender_type: (payload["sender_type"] as WireMessage["sender_type"]) ?? "member",
+    content,
+    client_msg_id: (payload["client_msg_id"] as string | null) ?? null,
+    created_at: new Date().toISOString(),
+    delivery_status:
+      (payload["delivery_status"] as WireMessage["delivery_status"]) ?? null,
+  };
+}
+
 function handleEvent(_seq: number, event: WidgetEvent): void {
   switch (event.type) {
     case "message.created": {
-      const m = event.payload["message"] as WireMessage | undefined;
+      const m = messageFromPayload(event.payload);
       if (!m) return;
       upsertMessage({ ...m, local_state: undefined } as UiMessage);
       if (m.sender_type !== "contact") {
@@ -276,7 +297,7 @@ function handleEvent(_seq: number, event: WidgetEvent): void {
       break;
     }
     case "message.updated": {
-      const m = event.payload["message"] as WireMessage | undefined;
+      const m = messageFromPayload(event.payload);
       if (m) upsertMessage(m as UiMessage);
       break;
     }

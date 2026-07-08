@@ -100,14 +100,23 @@ class RtEvent(BaseModel):
     def client_frame(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """Spec envelope sent to clients. Event types are dotted; control
         frames use undotted `type` values — that is how clients tell them
-        apart on a single socket."""
+        apart on a single socket.
+
+        `id`/`payload`/`conversation_id` mirror `event_id`/`data`/envelope
+        routing metadata: the admin SPA and the widget read those names, and
+        omitting conversation_id here once made every message.created frame
+        unroutable client-side (inbox froze until a manual refresh)."""
+        d = self.data if data is None else data
         return {
             "event_id": str(self.event_id),
+            "id": str(self.event_id),
             "seq": self.seq,
             "workspace_id": str(self.workspace_id),
             "type": self.type,
             "ts": self.ts.isoformat(),
-            "data": self.data if data is None else data,
+            "data": d,
+            "payload": d,
+            "conversation_id": str(self.conversation_id) if self.conversation_id else None,
         }
 
     def stream_fields(self) -> dict[str, str]:

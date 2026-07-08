@@ -261,7 +261,13 @@ async def handle_ai_inbound(
     """Generate + send an AI reply for an inbound customer message (or hand off).
     Returns None when not applicable (not AI-managed / duplicate / lock held).
     Emits events into `session`; the caller commits and publish_realtime()s."""
-    if conversation.handler != "ai_agent" or conversation.ai_state != "managed":
+    # 託管 (bot_managed) is the single switch: while it is ON the AI answers
+    # EVERY inbound customer message — even after a human agent interjected
+    # ('paused_human' no longer silences the AI). Only toggling 託管 off (or a
+    # hard handoff, which sets ai_state='off' + bot_managed=False) stops it.
+    if conversation.handler != "ai_agent" or not conversation.bot_managed:
+        return None
+    if conversation.ai_state == "off":
         return None
     if conversation.assignee_member_id is None:
         return None
@@ -355,18 +361,10 @@ async def _run(
         if allow_cards else {}
     )
 
-    # ---- consecutive KB-miss escalation ----
-    miss_key = f"ai:miss:{conversation.id}"
-    max_miss = int(rules.get("max_kb_miss", DEFAULT_MAX_KB_MISS) or 0)
-    if collection_ids and not retrieved.hit:
-        misses = int(await redis.incr(miss_key))
-        await redis.expire(miss_key, MISS_WINDOW_S)
-        if max_miss > 0 and misses >= max_miss:
-            await redis.delete(miss_key)
-            return await _handoff(session, redis, conversation, agent, reason="kb_miss",
-                                  history_rows=history_rows, client=client, now=now)
-    else:
-        await redis.delete(miss_key)
+    # NOTE: KB misses no longer escalate or disable the AI — the persona
+    # prompt produces a fallback answer instead, and [HANDOFF:no_context] is
+    # softened below. Only an explicit customer request (keywords) and billing
+    # hard-stops (quota/points) turn 託管 off.
 
     # ---- generate ----
     charged = 0
@@ -374,10 +372,12 @@ async def _run(
         try:
             payload = _external_payload(conversation, history_rows, customer_text)
             raw = await call_external_agent(agent, payload=payload)
-        except Exception:  # noqa: BLE001 — external failure → handoff
+        except Exception:  # noqa: BLE001 — external failure: fail soft, stay managed
             log.warning("external agent failed for conversation %s", conversation.id, exc_info=True)
-            return await _handoff(session, redis, conversation, agent, reason="external_error",
-                                  history_rows=history_rows, client=client, now=now)
+            # a transient outage must not disable 託管; free the per-message
+            # marker so the next inbound (or a redelivery) retries
+            await redis.delete(f"ai:done:{message.id}")
+            return AIOutcome(action="skipped")
     else:
         spend = await points_enforce.spend(
             session, redis, workspace_id=conversation.workspace_id, feature_key="ai_reply",
@@ -394,13 +394,15 @@ async def _run(
                 tier=agent.model_tier or "smart", system=system,
                 messages=history_to_messages(history_rows), max_tokens=1024, temperature=0.3,
             )
-        except Exception:  # noqa: BLE001 — refund the reserved points, then handoff
+        except Exception:  # noqa: BLE001 — refund and fail soft, stay managed
             if charged:
                 await points.refund(session, redis, workspace_id=conversation.workspace_id,
                                     points=charged, reason="ai_reply:refund", ref_type="ai_reply")
             log.warning("LLM completion failed for conversation %s", conversation.id, exc_info=True)
-            return await _handoff(session, redis, conversation, agent, reason="llm_error",
-                                  history_rows=history_rows, client=client, now=now)
+            # a transient LLM outage must not disable 託管 (it used to hand off
+            # permanently); free the per-message marker so a retry can answer
+            await redis.delete(f"ai:done:{message.id}")
+            return AIOutcome(action="skipped")
 
     # ---- markers ----
     parsed = parse_markers(raw or "")
@@ -409,6 +411,13 @@ async def _run(
     lead_enabled = ("lead_capture" in skills) or not skills  # default on if no skills configured
     if parsed.lead_fields and lead_enabled:
         await _apply_lead(session, conversation, parsed.lead_fields)
+
+    if parsed.handoff_reason == "no_context":
+        # A KB gap is not a reason to turn the AI off: deliver the model's
+        # fallback text as a normal reply and STAY managed. (The persona
+        # prompt tells the model to emit this marker on any miss — honouring
+        # it as a hard handoff used to kill the AI after one hard question.)
+        parsed.handoff_reason = None
 
     if parsed.handoff_reason:
         # send the apology text (if any) as the AI, then escalate

@@ -225,6 +225,7 @@ async def _handle_message_in(
                 got = await adapter.fetch_media(ref_acct, credentials, mref.ref)
                 fetched.append((mref.block_index, got))
 
+        rt_events: list[Event] = []
         async with session_factory() as session:
             async with session.begin():
                 acct = await session.get(ChannelAccount, account_id)
@@ -300,11 +301,14 @@ async def _handle_message_in(
                 )
                 session.add(msg)
 
-                conv.needs_reply = True
-                conv.agent_unread_count = (conv.agent_unread_count or 0) + 1
-                conv.last_message_at = now
-                conv.last_contact_message_at = now
-                conv.snippet = (text_plain or f"[{msg.msg_type}]")[:SNIPPET_LEN]
+                # single source of truth for inbound side effects (待回覆 /
+                # unread / snippet / session counters / assignee realtime
+                # unread + unread.changed). Window expiry stays channel-layer.
+                from ..services import messaging  # local import: avoids a cycle
+
+                rt_events += await messaging.register_inbound_message(
+                    session, conversation=conv, message=msg, redis=redis, now=now
+                )
                 caps = capabilities_for(acct.channel_type)
                 if caps.session_window_hours:
                     conv.customer_window_expires_at = now + timedelta(
@@ -319,55 +323,82 @@ async def _handle_message_in(
                     "channel_account_id": acct.id,
                 }
                 if contact_created:
-                    await event_bus.emit(
-                        session,
-                        Event(
-                            type="contact.created",
-                            actor=Actor(type="contact", id=contact.id),
-                            payload={
-                                "contact_id": str(contact.id),
-                                "display_name": contact.display_name,
-                                "source_channel": acct.channel_type,
-                            },
-                            **{**base_kwargs, "conversation_id": None},
-                        ),
-                    )
-                if conv_created:
-                    await event_bus.emit(
-                        session,
-                        Event(
-                            type="conversation.created",
-                            actor=Actor(type="contact", id=contact.id),
-                            payload={"channel_identity_id": str(identity.id)},
-                            **base_kwargs,
-                        ),
-                    )
-                elif conv_reopened:
-                    await event_bus.emit(
-                        session,
-                        Event(
-                            type="conversation.reopened",
-                            actor=Actor(type="contact", id=contact.id),
-                            payload={},
-                            **base_kwargs,
-                        ),
-                    )
-                await event_bus.emit(
-                    session,
-                    Event(
-                        type="message.created",
+                    ev_contact = Event(
+                        type="contact.created",
                         actor=Actor(type="contact", id=contact.id),
                         payload={
-                            "message_id": str(msg.id),
-                            "direction": "in",
-                            "msg_type": msg.msg_type,
-                            "text_plain": (text_plain or "")[:500],
-                            "external_message_id": ev.external_message_id,
-                            "channel_identity_id": str(identity.id),
+                            "contact_id": str(contact.id),
+                            "display_name": contact.display_name,
+                            "source_channel": acct.channel_type,
                         },
+                        **{**base_kwargs, "conversation_id": None},
+                    )
+                    await event_bus.emit(session, ev_contact)
+                    rt_events.append(ev_contact)
+                if conv_created:
+                    ev_conv = Event(
+                        type="conversation.created",
+                        actor=Actor(type="contact", id=contact.id),
+                        payload={"channel_identity_id": str(identity.id)},
                         **base_kwargs,
-                    ),
+                    )
+                    await event_bus.emit(session, ev_conv)
+                    rt_events.append(ev_conv)
+                elif conv_reopened:
+                    ev_conv = Event(
+                        type="conversation.reopened",
+                        actor=Actor(type="contact", id=contact.id),
+                        payload={},
+                        **base_kwargs,
+                    )
+                    await event_bus.emit(session, ev_conv)
+                    rt_events.append(ev_conv)
+                ev_msg = Event(
+                    type="message.created",
+                    actor=Actor(type="contact", id=contact.id),
+                    payload={
+                        "message_id": str(msg.id),
+                        "conversation_id": str(conv.id),
+                        "direction": "in",
+                        "sender_type": "contact",
+                        "msg_type": msg.msg_type,
+                        "text_plain": (text_plain or "")[:500],
+                        "external_message_id": ev.external_message_id,
+                        "channel_identity_id": str(identity.id),
+                        "is_note": False,
+                        # full row so live clients append to the open thread
+                        # without a refetch
+                        "message": {
+                            "id": str(msg.id),
+                            "conversation_id": str(conv.id),
+                            "channel_identity_id": str(identity.id),
+                            "direction": "in",
+                            "sender_type": "contact",
+                            "sender_id": str(contact.id),
+                            "msg_type": msg.msg_type,
+                            "content": msg.content,
+                            "text_plain": msg.text_plain,
+                            "is_note": False,
+                            "delivery_status": msg.delivery_status,
+                            "created_at": now.isoformat(),
+                        },
+                    },
+                    **base_kwargs,
                 )
+                await event_bus.emit(session, ev_msg)
+                rt_events.append(ev_msg)
+
+        # low-latency fan-out to live agents/visitors — WITHOUT this the inbox
+        # only updates on manual refresh (the outbox streams feed flow-engine /
+        # AI / rollup, never the ws-gateway). Best effort: realtime must never
+        # fail ingestion.
+        try:
+            await messaging.publish_realtime(rt_events)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "realtime publish failed for conversation %s", conversation_id,
+                exc_info=True,
+            )
 
     # AI/人工自動接待: an inbound message landing in an unassigned conversation
     # kicks the routing orchestrator (①bot ②AI ③human ④待分配). Best-effort —

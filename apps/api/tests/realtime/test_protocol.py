@@ -73,11 +73,20 @@ def _agent(perms: set[str] | None = None, open_conv=None) -> AgentScope:
 def test_client_frame_shape():
     ev = _event()
     frame = ev.client_frame()
-    assert set(frame) == {"event_id", "seq", "workspace_id", "type", "ts", "data"}
+    # canonical envelope + client-compat aliases: id/payload/conversation_id
+    # mirror event_id/data/routing metadata (the admin SPA and the widget read
+    # the alias names — dropping them froze inbox realtime updates once).
+    assert set(frame) == {
+        "event_id", "id", "seq", "workspace_id", "type", "ts",
+        "data", "payload", "conversation_id",
+    }
     assert frame["seq"] == 7
     assert frame["workspace_id"] == str(WS)
     assert frame["type"] == "message.created"
     assert frame["data"]["id"] == "m1"
+    assert frame["payload"] is frame["data"]
+    assert frame["id"] == frame["event_id"]
+    assert frame["conversation_id"] == (str(ev.conversation_id) if ev.conversation_id else None)
 
 
 def test_stream_fields_roundtrip():

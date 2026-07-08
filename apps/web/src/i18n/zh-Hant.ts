@@ -1396,6 +1396,9 @@ export const zhHant = {
   "notify.settings.sound": "提示音",
   "notify.settings.desktop": "桌面通知",
   "notify.settings.blocked": "瀏覽器已封鎖通知，請於瀏覽器設定中允許本站顯示通知。",
+  "notify.prompt.title": "開啟桌面通知",
+  "notify.prompt.desc": "允許瀏覽器通知後，即使切到其他分頁或視窗，也能即時收到新訊息提醒。",
+  "notify.prompt.enable": "開啟通知",
   "notify.settings.hint": "視窗未聚焦時，新訊息會以提示音、桌面通知與分頁標題閃爍提醒。",
 } as const;
 
