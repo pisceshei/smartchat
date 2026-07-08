@@ -59,6 +59,29 @@ const FIELD_TYPE_OPTIONS = [
   { value: "textarea", label: t("widget.config.fieldType.textarea") },
 ];
 
+// which tab each form field lives on — 儲存 must be able to JUMP to a failed
+// field's tab; a silently rejected validateFields with the error hidden on
+// another tab reads as "儲存壞了" (it did, in production).
+const FIELD_TAB: Record<string, string> = {
+  name: "brand",
+  brand_name: "brand",
+  welcome_text: "brand",
+  avatar_url: "brand",
+  position: "appearance",
+  primary_color: "appearance",
+  launcher_text: "appearance",
+  remove_branding: "appearance",
+  home_enabled: "home",
+  banners: "home",
+  reply_hint: "home",
+  prechat_enabled: "prechat",
+  prechat_required: "prechat",
+  prechat_fields: "prechat",
+  ai_agent_id: "routing",
+  member_ids: "routing",
+  domains_text: "domains",
+};
+
 function toForm(name: string, cfg: WidgetConfigJson, brandRemoved: boolean, domains: string[]): FormShape {
   return {
     name,
@@ -182,6 +205,7 @@ export function WidgetConfigPage() {
   const [form] = Form.useForm<FormShape>();
   const values = Form.useWatch([], form);
   const [installOpen, setInstallOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("brand");
 
   const widget = useQuery({
     queryKey: ["widget", id],
@@ -243,7 +267,21 @@ export function WidgetConfigPage() {
             type="primary"
             icon={<SaveOutlined />}
             loading={save.isPending}
-            onClick={() => form.validateFields().then((v) => save.mutate(v))}
+            onClick={() =>
+              form
+                .validateFields()
+                .then((v) => save.mutate(v))
+                .catch((info: { errorFields?: { name: (string | number)[]; errors: string[] }[] }) => {
+                  // a rejected validateFields used to be swallowed — the save
+                  // silently did nothing with the failed field hidden on
+                  // another tab. Surface it and jump there instead.
+                  const first = info?.errorFields?.[0];
+                  const tab = first ? FIELD_TAB[String(first.name[0])] : undefined;
+                  if (tab) setActiveTab(tab);
+                  if (first) form.scrollToField(first.name);
+                  message.error(first?.errors?.[0] ?? t("common.operationFailed"));
+                })
+            }
           >
             {t("common.save")}
           </Button>
@@ -258,6 +296,8 @@ export function WidgetConfigPage() {
             initialValues={toForm(w.name, w.config ?? {}, w.brand_removed, w.allowed_domains ?? [])}
           >
             <Tabs
+              activeKey={activeTab}
+              onChange={setActiveTab}
               items={[
                 {
                   key: "brand",
