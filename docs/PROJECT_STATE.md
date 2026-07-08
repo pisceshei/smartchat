@@ -67,8 +67,23 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   `lavender-candle`/`rose-diffuser`/`sleep-spray`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Server is deployed from branch `fix/outbound-dispatch`** (contains main +
+  outbound-dispatch fix + bridge LID fix, all E2E-verified in prod 2026-07-08:
+  WhatsApp AI/agent replies now show ✓✓ read receipts). TODO: merge that branch
+  into `main` on GitHub (fast-forward), then on the server
+  `git checkout main && git pull origin main` so future deploys pull main again.
+  One stale test message remains `delivery_status=failed` (exhausted retries
+  before the bridge fix); requeue with
+  `UPDATE messages SET delivery_status='pending', delivery_error=NULL WHERE delivery_status='failed' AND delivery_error='RETRYABLE';`
+  if you want it delivered — the drain cron picks it up.
+- **WhatsApp LID outbound** (fixed 2026-07-08, commit `9da5793`): identities
+  created from LID-addressed inbound with empty `SenderAlt` store the lid digits;
+  phone addressing (`<lid>@s.whatsapp.net`) fails "no LID found". The bridge now
+  retries such sends via `@lid` (Signal session already exists from inbound) and
+  caches the discovery per device. Verified: `[Bridge INFO] recipient … is a lid,
+  not a phone — delivered via @lid`, messages went sent→delivered→read.
 - **Outbound replies were never dispatched to the channel** (fixed 2026-07-08 on
-  branch `fix/outbound-dispatch`, verify with real phones): `messaging.send_message`
+  branch `fix/outbound-dispatch`, E2E-verified): `messaging.send_message`
   writes the message `delivery_status='pending'` and emits `message.created` with
   `requires_channel_send=True`, but **nothing consumed that flag** to call
   `enqueue_send`. Only `marketing/fanout` enqueued; the three interactive paths —
