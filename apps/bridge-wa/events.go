@@ -77,7 +77,7 @@ type messageInEvent struct {
 	Content           messageContent `json:"content"`
 	ExternalTimestamp string         `json:"external_timestamp,omitempty"`
 	Profile           profileHint    `json:"profile"`
-	MediaRefs         []mediaRef     `json:"media_refs"`
+	MediaRefs         []mediaRef     `json:"media_refs,omitempty"`
 }
 
 type deliveryStatusEvent struct {

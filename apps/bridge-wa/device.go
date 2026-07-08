@@ -229,7 +229,7 @@ func (d *Device) handleMessage(e *events.Message) {
 	}
 
 	var blocks []any
-	var refs []mediaRef
+	refs := []mediaRef{} // non-nil so JSON is [] not null (a text message has no media refs; null trips the API's list[MediaRef] validator)
 
 	// media blocks first (a WhatsApp media message carries its text as the media
 	// caption, never as Conversation, so text + media never both fire here).

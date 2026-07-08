@@ -30,7 +30,8 @@ from py_contracts.content import (
     TemplateBlock,
     TextBlock,
 )
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
+from pydantic import ValidationInfo
 
 # --------------------------------------------------------------------------
 # inbound event union
@@ -69,6 +70,16 @@ class MessageIn(BaseModel):
     media_refs: list[MediaRef] = Field(default_factory=list)
     reply_to_external_id: str | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("media_refs", "meta", "profile", mode="before")
+    @classmethod
+    def _null_to_default(cls, v: Any, info: ValidationInfo) -> Any:
+        # a channel adapter that serializes an empty/optional field as JSON null
+        # (e.g. a Go nil slice/map) must not fail validation and silently drop
+        # the whole inbound message — coerce null back to the field default.
+        if v is not None:
+            return v
+        return [] if info.field_name == "media_refs" else {}
 
 
 class DeliveryStatus(BaseModel):
