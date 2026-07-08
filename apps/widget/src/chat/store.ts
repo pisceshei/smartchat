@@ -81,7 +81,14 @@ export const store = createStore<AppState>({
 
 export function useAppState(): AppState {
   const [s, setS] = useState(store.get());
-  useEffect(() => store.subscribe(setS), []);
+  useEffect(() => {
+    const unsub = store.subscribe(setS);
+    // re-read after subscribing: store.set calls that landed between the
+    // first render and this effect would otherwise be lost forever (fast
+    // same-origin bootstrap resolves before the effect attaches).
+    setS(store.get());
+    return unsub;
+  }, []);
   return s;
 }
 

@@ -127,9 +127,9 @@ export function MembersPage() {
       key: "groups",
       width: 160,
       render: (_, m) =>
-        m.group_ids.length > 0 ? (
+        (m.group_ids ?? []).length > 0 ? (
           <span>
-            {m.group_ids.map((gid) => (
+            {(m.group_ids ?? []).map((gid) => (
               <Tag key={gid} style={{ fontSize: 11 }}>
                 {groupName(gid)}
               </Tag>

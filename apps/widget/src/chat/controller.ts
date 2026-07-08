@@ -91,8 +91,9 @@ export function bootChat(): void {
           open: true,
         });
       })
-      .catch(() => {
-        /* invalid key — leave the boot skeleton */
+      .catch((e) => {
+        // invalid key or an init crash — keep the skeleton but surface why
+        console.error("[smartchat-widget] standalone boot failed", e);
       });
   }
 }
