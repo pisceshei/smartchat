@@ -21,6 +21,18 @@ export interface PreChatField {
   options?: PreChatFieldOption[];
 }
 
+/** A single visitor "contact us on X" entry derived from a connected channel.
+ * kind="link" opens `url`; kind="copy" copies `value` (channels with no URL
+ * scheme, e.g. WeChat). icon_key selects a brand glyph in SocialIcons. */
+export interface SocialEntry {
+  channel_type: string;
+  label: string;
+  kind: "link" | "copy";
+  url?: string;
+  value?: string;
+  icon_key: string;
+}
+
 export interface WidgetBootstrap {
   widget_key: string;
   brand?: {
@@ -43,6 +55,12 @@ export interface WidgetBootstrap {
     enabled?: boolean;
     banners?: { image_url: string; link_url?: string }[];
     reply_hint?: string;
+  } | null;
+  /** Auto-derived "contact us on <channel>" entries, one per connected channel.
+   * Backend builds only safe fields — never raw account internals. */
+  social?: {
+    enabled?: boolean;
+    channels?: SocialEntry[];
   } | null;
   pre_chat?: {
     enabled?: boolean;

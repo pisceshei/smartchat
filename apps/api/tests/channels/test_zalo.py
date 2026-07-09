@@ -204,6 +204,21 @@ async def test_refresh_missing_fields_returns_none():
     assert await _adapter().refresh_credentials(None, {"refresh_token": "only"}) is None
 
 
+async def test_refresh_accepts_app_secret_fallback():
+    """Accounts connected before the frontend field fix stored the OA secret
+    under `app_secret`; refresh must still work off that fallback key."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["secret_key"] = request.headers.get("secret_key")
+        return httpx.Response(200, json={"access_token": "NEW"})
+
+    creds = {"access_token": "OLD", "refresh_token": "RT1", "app_id": "APP", "app_secret": "SEC"}
+    updated = await _adapter(handler).refresh_credentials(None, creds)
+    assert updated is not None and updated["access_token"] == "NEW"
+    assert captured["secret_key"] == "SEC"
+
+
 # --------------------------------------------------------------------------
 # 6. connect_validate
 # --------------------------------------------------------------------------

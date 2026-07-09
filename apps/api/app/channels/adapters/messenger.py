@@ -337,6 +337,43 @@ class MessengerAdapter(BaseAdapter):
         status = "token_expired" if err.get("code") in (190, 102, 104) else "error"
         return HealthResult(ok=False, status=status, detail={"error": err.get("message")})
 
+    async def subscribe_page(
+        self,
+        access_token: str,
+        page_id: str,
+        fields: str = "messages,messaging_postbacks,message_deliveries,message_reads",
+    ) -> bool:
+        """Subscribe our app to the Page's webhook events so inbound reaches
+        /hooks/meta. Idempotent on Meta's side. Best-effort: a failure is
+        surfaced via health, never a hard connect error (some tokens lack
+        pages_manage_metadata)."""
+        try:
+            r = await self.http.post(
+                f"{GRAPH_BASE}/{page_id}/subscribed_apps",
+                params={"subscribed_fields": fields, "access_token": access_token},
+            )
+            data = r.json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        return r.status_code < 400 and bool(data.get("success", True))
+
+    async def resolve_ig_account(self, access_token: str, page_id: str) -> str | None:
+        """The Instagram Business account id linked to a Page. IG messaging
+        webhooks arrive under entry.id = this IG id (NOT the page id), so a
+        via-Page connect must store it as external_id or inbound never matches."""
+        try:
+            r = await self.http.get(
+                f"{GRAPH_BASE}/{page_id}",
+                params={"fields": "instagram_business_account", "access_token": access_token},
+            )
+            data = r.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        if r.status_code >= 400:
+            return None
+        iga = data.get("instagram_business_account") or {}
+        return str(iga["id"]) if iga.get("id") else None
+
     async def fetch_profile(
         self, credentials: dict[str, Any], user_id: str
     ) -> ProfileHint | None:

@@ -19,6 +19,7 @@ export interface FormShape {
   home_enabled: boolean;
   banners: WidgetBannerItem[];
   reply_hint: string;
+  social_enabled: boolean;
   prechat_enabled: boolean;
   prechat_required: boolean;
   prechat_fields: WidgetPrechatField[];
@@ -42,6 +43,7 @@ export const FIELD_TAB: Record<string, string> = {
   home_enabled: "home",
   banners: "home",
   reply_hint: "home",
+  social_enabled: "home",
   prechat_enabled: "prechat",
   prechat_required: "prechat",
   prechat_fields: "prechat",
@@ -71,6 +73,7 @@ const FIELD_LABEL: Record<string, I18nKey> = {
   home_enabled: "widget.config.homeEnabled",
   banners: "widget.config.banners",
   reply_hint: "widget.config.replyHint",
+  social_enabled: "widget.config.socialEnabled",
   prechat_enabled: "widget.config.prechatEnabled",
   prechat_required: "widget.config.prechatRequired",
   prechat_fields: "widget.config.prechatFields",
@@ -104,6 +107,8 @@ export function toForm(
     home_enabled: cfg.home?.enabled ?? false,
     banners: cfg.home?.banners ?? [],
     reply_hint: cfg.home?.reply_hint ?? "",
+    // default on: connect a channel → its contact entry auto-appears
+    social_enabled: cfg.social?.enabled ?? true,
     prechat_enabled: cfg.pre_chat?.enabled ?? false,
     prechat_required: cfg.pre_chat?.required_before_chat ?? false,
     prechat_fields: cfg.pre_chat?.fields ?? [],
@@ -136,6 +141,8 @@ export function toConfig(cfg: WidgetConfigJson, v: FormShape): WidgetConfigJson 
       banners: (v.banners ?? []).filter((b) => b?.image_url),
       reply_hint: v.reply_hint || undefined,
     },
+    // preserve hidden/shown/order/labels (not surfaced by the editor yet)
+    social: { ...cfg.social, enabled: v.social_enabled },
     pre_chat: {
       ...cfg.pre_chat,
       enabled: v.prechat_enabled,

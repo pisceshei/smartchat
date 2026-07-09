@@ -81,23 +81,13 @@ _DISPATCH_TYPES = frozenset(
 # for one (needs_webhook_secret). Slack (app-level URL) and YouTube (polling)
 # are intentionally absent.
 _HOOK_PATH = {
+    "line_oa": "line",
     "vk": "vk",
     "wechat_kf": "wechat",
     "wecom": "wechat",  # WeCom shares /hooks/wechat/{secret}, routed by channel_type
     "zalo_app": "zalo",
     "tiktok_business": "tiktok",
 }
-
-# per-type credential fields accepted at connect time (everything else → config)
-_CRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "telegram_bot": ("bot_token",),
-    "whatsapp_cloud": ("access_token",),
-    "messenger": ("page_access_token",),
-    "instagram": ("page_access_token",),
-    "line_oa": ("channel_secret", "channel_access_token"),
-    "email": ("imap_password", "smtp_password"),
-}
-
 
 def _serialize_account(acct: ChannelAccount) -> dict[str, Any]:
     return {
@@ -155,6 +145,13 @@ class ConnectBody(BaseModel):
 # keys whose presence marks a value as a secret → envelope-encrypted credentials.
 _SECRET_HINTS = ("token", "secret", "password", "key", "api_key")
 _NON_SECRET = frozenset({"name", "external_id", "credentials", "config"})
+
+# OAuth2 token endpoints for well-known email providers; a "custom" provider
+# must supply oauth_token_endpoint explicitly (used by refresh_credentials).
+_EMAIL_OAUTH_ENDPOINTS = {
+    "gmail": "https://oauth2.googleapis.com/token",
+    "outlook": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+}
 
 
 def _normalize_connect_body(body: ConnectBody) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -314,13 +311,30 @@ async def connect_account(
         # adapters read access_token; keep page_access_token as the original key too
         if not credentials.get("access_token"):
             credentials["access_token"] = credentials["page_access_token"]
+        # subscribe our app to the Page so inbound flows to /hooks/meta without a
+        # manual step in the Meta dashboard (best-effort; reported via health).
+        health_detail["subscribed"] = await adapter.subscribe_page(
+            credentials["access_token"], external_id
+        )
     elif channel_type == "instagram":
         # Two connect modes: via-Page (page_access_token + page_id) or IG-Login
         # (access_token + ig_user_id — the modal's login_type=ig form).
         if credentials.get("page_access_token") and (external_id or config.get("page_id")):
-            external_id = external_id or str(config.get("page_id"))
+            page_id = external_id or str(config.get("page_id"))
             if not credentials.get("access_token"):
                 credentials["access_token"] = credentials["page_access_token"]
+            # IG messaging webhooks arrive under entry.id = the linked IG Business
+            # account id, NOT the page id — resolve + store it as external_id so
+            # /hooks/meta routing matches (else all inbound is dropped). Fall back
+            # to page_id when the link can't be resolved (still lets connect land).
+            ig_id = await adapter.resolve_ig_account(credentials["access_token"], page_id)
+            external_id = ig_id or page_id
+            config["page_id"] = page_id  # kept for send (via-Page uses /me/messages)
+            health_detail["subscribed"] = await adapter.subscribe_page(
+                credentials["access_token"], page_id
+            )
+            if ig_id is None:
+                health_detail["ig_link"] = "unresolved"
         elif credentials.get("access_token") and (external_id or config.get("ig_user_id")):
             external_id = external_id or str(config.get("ig_user_id"))
             config["ig_login"] = True  # send path: graph.instagram.com (adapter)
@@ -341,16 +355,90 @@ async def connect_account(
                 f"access_token+ig_user_id (Instagram login); missing: {', '.join(missing)}",
             )
     elif channel_type == "line_oa":
-        if not credentials.get("channel_secret") or not credentials.get("channel_access_token"):
+        access_token = credentials.get("channel_access_token") or credentials.get("access_token")
+        if not credentials.get("channel_secret") or not access_token:
             raise HTTPException(422, "channel_secret and channel_access_token required")
         external_id = external_id or str(config.get("channel_id") or "")
         if not external_id:
             raise HTTPException(422, "channel_id required")
+        # duplicate check BEFORE set_webhook: LINE has a SINGLE registered
+        # endpoint per channel, and set_webhook rotates it to a freshly generated
+        # secret. If a later 409 aborts the commit, that secret is never
+        # persisted and all inbound is silently black-holed (the hooks router
+        # 200s unmatched secrets so LINE never retries) — the same trap the
+        # telegram branch guards. A disabled same-workspace row still reactivates
+        # via the global dup handling below (and re-registers correctly).
+        dup_early = (
+            await session.execute(
+                select(ChannelAccount).where(
+                    ChannelAccount.channel_type == channel_type,
+                    ChannelAccount.external_id == external_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if dup_early is not None and (
+            dup_early.enabled or dup_early.workspace_id != member.workspace.id
+        ):
+            raise HTTPException(409, "this account is already connected")
+        # adapters (send/check_health/fetch_media) read access_token; the modal
+        # posts channel_access_token — mirror it so outbound + health work.
+        credentials["access_token"] = access_token
+        # auto-register our per-account inbound endpoint on the LINE channel so
+        # the operator need not paste it into the console (best-effort; a failure
+        # is reported via health, not a hard error — some tokens lack the scope).
+        hook_url = f"{settings.public_base_url}/hooks/line/{webhook_secret}"
+        health_detail["webhook"] = (
+            "registered" if await adapter.set_webhook(access_token, hook_url) else "manual"
+        )
+        needs_hook_secret = True
     elif channel_type == "email":
+        # The email adapter reads ALL connection settings (host/port/ssl/user/
+        # password/oauth_*) from the ENCRYPTED credentials, but the flat modal
+        # body splits by secret-hint — so host/port/user/auth_type would land in
+        # config and never reach the adapter. Remap the merged body to the exact
+        # credential keys the adapter expects (imap_user/imap_password/smtp_* …).
+        merged = {**config, **credentials}
         for k in ("imap_host", "smtp_host", "address"):
-            if not config.get(k):
+            if not merged.get(k):
                 raise HTTPException(422, f"{k} required")
-        external_id = str(config["address"]).lower()
+        address = str(merged["address"]).lower()
+        external_id = address
+        auth_type = str(merged.get("auth_type") or "password")
+        username = merged.get("username") or merged.get("imap_user") or address
+        email_creds: dict[str, Any] = {
+            "auth_type": auth_type,
+            "email": address,
+            "imap_host": merged.get("imap_host"),
+            "imap_port": merged.get("imap_port") or 993,
+            "imap_ssl": merged.get("imap_ssl", True),
+            "smtp_host": merged.get("smtp_host"),
+            "smtp_port": merged.get("smtp_port") or 465,
+            # adapter reads smtp_tls (STARTTLS gate); modal sends smtp_ssl
+            "smtp_tls": merged.get("smtp_ssl", True),
+            "imap_user": username,
+            "smtp_user": merged.get("smtp_user") or username,
+        }
+        if auth_type == "oauth2":
+            for key in (
+                "oauth_access_token", "oauth_refresh_token", "oauth_token_endpoint",
+                "oauth_client_id", "oauth_client_secret", "oauth_user",
+            ):
+                if merged.get(key) is not None:
+                    email_creds[key] = merged[key]
+            endpoint = email_creds.get("oauth_token_endpoint") or _EMAIL_OAUTH_ENDPOINTS.get(
+                str(merged.get("oauth_provider") or "").lower()
+            )
+            if endpoint:
+                email_creds["oauth_token_endpoint"] = endpoint
+        else:
+            pwd = merged.get("password") or merged.get("imap_password") or ""
+            email_creds["imap_password"] = pwd
+            email_creds["smtp_password"] = merged.get("smtp_password") or pwd
+        credentials = {k: v for k, v in email_creds.items() if v is not None}
+        # config keeps only non-secret display fields (never secrets in JSONB)
+        config = {"address": address, "auth_type": auth_type}
+        if merged.get("oauth_provider"):
+            config["oauth_provider"] = merged["oauth_provider"]
     elif channel_type in _DISPATCH_TYPES:
         # Phase 4: the adapter authenticates, resolves the provider account id,
         # registers the webhook and reports health. Pass a MERGED view so an

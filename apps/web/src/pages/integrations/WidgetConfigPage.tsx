@@ -293,6 +293,15 @@ export function WidgetConfigPage() {
                       <Form.Item name="reply_hint" label={t("widget.config.replyHint")} style={{ marginTop: 20 }}>
                         <Input maxLength={100} />
                       </Form.Item>
+                      <Form.Item
+                        name="social_enabled"
+                        label={t("widget.config.socialEnabled")}
+                        valuePropName="checked"
+                        extra={t("widget.config.socialHint")}
+                        style={{ marginTop: 20 }}
+                      >
+                        <Switch />
+                      </Form.Item>
                     </>
                   ),
                 },

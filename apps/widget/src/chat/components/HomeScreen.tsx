@@ -1,9 +1,58 @@
-import { localized, type WidgetBootstrap } from "../../shared/config";
+import { useState } from "preact/hooks";
+
+import { localized, type SocialEntry, type WidgetBootstrap } from "../../shared/config";
 import { goChat, goHome, requestClose } from "../controller";
 import { t } from "../i18n";
+import { SocialIcon } from "./SocialIcons";
 
 function openBanner(url?: string): void {
   if (url) window.open(url, "_blank", "noopener");
+}
+
+/** "Contact us on <channel>" row — one icon button per connected channel.
+ * kind="link" opens the deep link; kind="copy" copies the handle (WeChat etc.)
+ * and flashes a confirmation. */
+function SocialRow(props: { entries: SocialEntry[] }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const activate = (e: SocialEntry) => {
+    if (e.kind === "link" && e.url) {
+      window.open(e.url, "_blank", "noopener");
+    } else if (e.kind === "copy" && e.value) {
+      // only flash "Copied" once the write actually resolves — an iframe without
+      // clipboard-write permission (or http) must not show a false confirmation
+      const p = navigator.clipboard?.writeText(e.value);
+      p?.then(() => {
+        setCopied(e.channel_type);
+        setTimeout(() => setCopied(null), 1600);
+      }).catch(() => {
+        /* clipboard blocked — leave the label unchanged */
+      });
+    }
+  };
+  return (
+    <div class="sc-social">
+      <div class="sc-social-title">{t("home_contact_via")}</div>
+      <div class="sc-social-row">
+        {props.entries.map((e) => (
+          <button
+            key={e.channel_type + ":" + (e.url || e.value || "")}
+            type="button"
+            class="sc-social-item"
+            aria-label={e.label}
+            title={e.kind === "copy" ? e.value : e.label}
+            onClick={() => activate(e)}
+          >
+            <span class="sc-social-ic">
+              <SocialIcon icon={e.icon_key} />
+            </span>
+            <span class="sc-social-label">
+              {copied === e.channel_type ? t("home_copied") : e.label}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function HomeScreen(props: { config: WidgetBootstrap; lang: string }) {
@@ -12,6 +61,8 @@ export function HomeScreen(props: { config: WidgetBootstrap; lang: string }) {
   const home = config.home || {};
   const isOnline = config.offline?.is_online !== false;
   const welcome = localized(brand.welcome_text, lang) || t("welcome_default");
+  const social =
+    config.social?.enabled === false ? [] : config.social?.channels || [];
 
   return (
     <div class="sc-home">
@@ -77,6 +128,7 @@ export function HomeScreen(props: { config: WidgetBootstrap; lang: string }) {
             />
           </svg>
         </button>
+        {social.length > 0 ? <SocialRow entries={social} /> : null}
       </div>
     </div>
   );

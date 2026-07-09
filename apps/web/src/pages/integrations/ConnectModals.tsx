@@ -247,6 +247,7 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
   const [form] = Form.useForm();
   const connect = useConnect("email", onClose);
   const authType = (Form.useWatch("auth_type", form) as string) ?? "password";
+  const oauthProvider = (Form.useWatch("oauth_provider", form) as string) ?? "gmail";
   return (
     <ConnectModalShell
       title="Email"
@@ -358,6 +359,27 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
             >
               <Input.Password autoComplete="new-password" />
             </Form.Item>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Form.Item name="oauth_client_id" label={t("int.email.oauthClientId")} preserve={false}>
+                <Input autoComplete="off" />
+              </Form.Item>
+              <Form.Item
+                name="oauth_client_secret"
+                label={t("int.email.oauthClientSecret")}
+                preserve={false}
+              >
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+            </div>
+            {oauthProvider === "custom" ? (
+              <Form.Item
+                name="oauth_token_endpoint"
+                label={t("int.email.oauthTokenEndpoint")}
+                preserve={false}
+              >
+                <Input autoComplete="off" placeholder="https://oauth2.example.com/token" />
+              </Form.Item>
+            ) : null}
           </>
         )}
       </Form>
@@ -867,7 +889,7 @@ export function ZaloConnectModal({ open, onClose }: ModalProps) {
         <Form.Item name="app_id" label={t("int.zalo.appId")} rules={REQUIRED}>
           <Input autoComplete="off" />
         </Form.Item>
-        <Form.Item name="app_secret" label={t("int.zalo.appSecret")} rules={REQUIRED}>
+        <Form.Item name="oa_secret" label={t("int.zalo.appSecret")} rules={REQUIRED}>
           <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="access_token" label={t("int.zalo.accessToken")} rules={REQUIRED}>

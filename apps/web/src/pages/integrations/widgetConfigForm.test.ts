@@ -98,4 +98,25 @@ describe("toConfig", () => {
     expect(out.offline).toEqual({ auto_reply: "off-hours" });
     expect(out.features).toEqual({ file_upload: false });
   });
+
+  it("writes social.enabled but preserves hidden/order the editor doesn't surface", () => {
+    const cfg = {
+      ...SAVED_CFG,
+      social: { enabled: true, hidden: ["whatsapp_app"], order: ["telegram_bot"] },
+    } as WidgetConfigJson;
+    const form = toForm("CHILL LOVE", cfg, false, []);
+    form.social_enabled = false; // operator turns the row off
+    const out = toConfig(cfg, form);
+    expect(out.social).toEqual({
+      enabled: false,
+      hidden: ["whatsapp_app"],
+      order: ["telegram_bot"],
+    });
+  });
+});
+
+describe("toForm social default", () => {
+  it("defaults social_enabled ON when config has no social block (auto-show)", () => {
+    expect(savedForm().social_enabled).toBe(true);
+  });
 });

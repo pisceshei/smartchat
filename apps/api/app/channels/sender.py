@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import redis.asyncio as aioredis
@@ -38,7 +38,7 @@ from ..services import event_bus
 from ..settings import get_settings
 from . import ratelimit
 from .base import AccountRef, SendResult, capabilities_for, content_has_template
-from .creds import get_credentials
+from .creds import get_credentials, set_credentials
 from .ingress_pipeline import apply_delivery_status, pop_parked
 from .registry import get_adapter
 
@@ -502,6 +502,175 @@ async def email_poll_task(ctx: dict[str, Any]) -> int:
     return total
 
 
+# OAuth channels whose short-lived access tokens must be refreshed proactively
+# (adapters implement refresh_credentials). Permanent-token / password channels
+# (messenger/whatsapp_cloud/telegram/line_oa) carry no expiry stamp → skipped.
+_REFRESHABLE_CHANNELS = ("email", "youtube", "zalo_app")
+
+
+def _token_expiry(credentials: dict[str, Any]) -> datetime | None:
+    raw = credentials.get("token_expires_at") or credentials.get("oauth_token_expires_at")
+    if not raw:
+        return None
+    try:
+        exp = datetime.fromisoformat(str(raw))
+    except (ValueError, TypeError):
+        return None
+    return exp.replace(tzinfo=UTC) if exp.tzinfo is None else exp
+
+
+async def _refresh_if_expiring(
+    session: AsyncSession, acct: ChannelAccount, credentials: dict[str, Any], *, skew_min: int = 5
+) -> dict[str, Any]:
+    """Refresh an account's OAuth token when it expires within skew_min minutes,
+    persist it, and return the fresh credentials. No-op for tokens without an
+    expiry stamp or when the adapter's refresh yields nothing (caller keeps the
+    stored credentials). Central so both the poll beats and the refresh sweep
+    stay consistent — connect only probes once, nothing refreshed before."""
+    exp = _token_expiry(credentials)
+    if exp is None or exp - datetime.now(UTC) > timedelta(minutes=skew_min):
+        return credentials
+    try:
+        updated = await get_adapter(acct.channel_type).refresh_credentials(acct, credentials)
+    except Exception:  # noqa: BLE001 — refresh must never crash a beat
+        log.exception("token refresh failed account=%s", acct.id)
+        return credentials
+    if updated:
+        await set_credentials(session, acct, updated)
+        await session.commit()
+        return updated
+    return credentials
+
+
+@task
+async def youtube_poll_task(ctx: dict[str, Any]) -> int:
+    """Poll every enabled YouTube account for new top-level comments (YouTube
+    has NO webhook). Per-account Redis lock prevents double-polling; the poll
+    cursor is persisted to config so comments are never re-ingested."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from .ingress_pipeline import enqueue_inbound
+
+    session_factory = ctx["session_factory"]
+    redis = ctx["redis"]
+    async with session_factory() as session:
+        ids = (
+            await session.execute(
+                select(ChannelAccount.id).where(
+                    ChannelAccount.channel_type == "youtube",
+                    ChannelAccount.enabled.is_(True),
+                )
+            )
+        ).scalars().all()
+    total = 0
+    for aid in ids:
+        if not await redis.set(f"youtube:poll:{aid}", "1", nx=True, ex=110):
+            continue
+        try:
+            async with session_factory() as session:
+                acct = await session.get(ChannelAccount, aid)
+                if acct is None or not acct.enabled:
+                    continue
+                creds = await get_credentials(session, acct)
+                creds = await _refresh_if_expiring(session, acct, creds)
+                res = await get_adapter("youtube").poll_comments(acct, creds)
+                if res.count:
+                    await enqueue_inbound(
+                        redis,
+                        account_id=acct.id,
+                        workspace_id=acct.workspace_id,
+                        channel_type="youtube",
+                        payload=res.payload,
+                    )
+                    total += res.count
+                if res.cursor and res.cursor != (acct.config or {}).get("youtube_poll_cursor"):
+                    acct.config = {**(acct.config or {}), "youtube_poll_cursor": res.cursor}
+                    flag_modified(acct, "config")
+                    await session.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("youtube poll failed account=%s", aid)
+        finally:
+            await redis.delete(f"youtube:poll:{aid}")
+    return total
+
+
+@task
+async def refresh_tokens_task(ctx: dict[str, Any]) -> int:
+    """Proactively refresh OAuth access tokens ~5 min before expiry so a channel
+    never dies waiting for a reactive send failure. Accounts without an expiry
+    stamp (permanent/password auth) are skipped by _refresh_if_expiring."""
+    session_factory = ctx["session_factory"]
+    redis = ctx["redis"]
+    async with session_factory() as session:
+        ids = (
+            await session.execute(
+                select(ChannelAccount.id).where(
+                    ChannelAccount.channel_type.in_(_REFRESHABLE_CHANNELS),
+                    ChannelAccount.enabled.is_(True),
+                )
+            )
+        ).scalars().all()
+    refreshed = 0
+    for aid in ids:
+        if not await redis.set(f"token:refresh:{aid}", "1", nx=True, ex=55):
+            continue
+        try:
+            async with session_factory() as session:
+                acct = await session.get(ChannelAccount, aid)
+                if acct is None or not acct.enabled:
+                    continue
+                creds = await get_credentials(session, acct)
+                before = creds.get("access_token") or creds.get("oauth_access_token")
+                creds = await _refresh_if_expiring(session, acct, creds)
+                after = creds.get("access_token") or creds.get("oauth_access_token")
+                if before != after:
+                    refreshed += 1
+        except Exception:  # noqa: BLE001
+            log.exception("token refresh sweep failed account=%s", aid)
+        finally:
+            await redis.delete(f"token:refresh:{aid}")
+    return refreshed
+
+
+@task
+async def health_probe_task(ctx: dict[str, Any]) -> int:
+    """Periodic health re-probe: connect only probes once, so a token that dies
+    later (or a webhook removed in the provider console) is invisible until the
+    next send. Refreshes channel_accounts.status/health for the admin UI. The
+    per-account lock (long TTL) spreads probes so each account is hit ~once per
+    beat window, not on every beat."""
+    session_factory = ctx["session_factory"]
+    redis = ctx["redis"]
+    async with session_factory() as session:
+        ids = (
+            await session.execute(
+                select(ChannelAccount.id).where(
+                    ChannelAccount.enabled.is_(True),
+                    ChannelAccount.channel_type.notin_(("widget",)),
+                )
+            )
+        ).scalars().all()
+    probed = 0
+    for aid in ids:
+        if not await redis.set(f"health:probe:{aid}", "1", nx=True, ex=590):
+            continue
+        try:
+            async with session_factory() as session:
+                acct = await session.get(ChannelAccount, aid)
+                if acct is None or not acct.enabled:
+                    continue
+                creds = await get_credentials(session, acct)
+                creds = await _refresh_if_expiring(session, acct, creds)
+                result = await get_adapter(acct.channel_type).check_health(acct, creds)
+                acct.status = "active" if result.ok else result.status
+                acct.health = {**(acct.health or {}), **(result.detail or {})}
+                await session.commit()
+                probed += 1
+        except Exception:  # noqa: BLE001
+            log.exception("health probe failed account=%s", aid)
+    return probed
+
+
 def _register_crons() -> None:
     from arq import cron
 
@@ -512,6 +681,11 @@ def _register_crons() -> None:
     register_cron(cron(drain_pending_sends_task, second={5, 20, 35, 50}, run_at_startup=True))
     register_cron(cron(email_poll_task, minute=set(range(60)), run_at_startup=False))
     register_cron(cron(requeue_stuck_sending_task, minute=set(range(0, 60, 2))))
+    # YouTube has no webhook — poll comments every 2 min (Data API quota-friendly)
+    register_cron(cron(youtube_poll_task, minute=set(range(0, 60, 2))))
+    # proactive OAuth refresh + periodic health so tokens/webhooks don't silently rot
+    register_cron(cron(refresh_tokens_task, minute=set(range(0, 60, 5))))
+    register_cron(cron(health_probe_task, minute=set(range(0, 60, 10))))
 
 
 _register_crons()

@@ -81,6 +81,54 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   tab (`InboxPage` defaults to `"ai"`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Round 11 (2026-07-09): widget auto social-entry + official-API channels to production grade**
+  - *widget 自動社媒入口*: connect a channel → the visitor widget's Home tab
+    automatically gains a "透過以下方式聯絡我們" entry that deep-links to it.
+    Backend `widget/service.py::channel_contact_entry` derives a SAFE public link
+    per channel (email→mailto, whatsapp_bsp→wa.me/`external_id`, whatsapp_cloud→
+    wa.me/`health.display_phone_number`, telegram_bot→t.me/`health.username`,
+    line_oa→line.me/R/ti/p/`health.basic_id`, messenger→m.me/`external_id`;
+    wechat_kf→copy handle); `_assemble_social` filters by the per-widget
+    `config.social` allow-list and injects a `social` block into the public
+    bootstrap. **Privacy contract**: the bootstrap endpoint is unauthenticated,
+    so ONLY the derived link/handle is exposed — never external_id/health/creds.
+    Personal-number/internal channels (`whatsapp_app`) are default-hidden (opt-in
+    via `social.shown`). Widget renders `.sc-social` in `HomeScreen.tsx` with
+    inline-SVG brand glyphs (`SocialIcons.tsx`, no icon lib — chat bundle still
+    24.7KB gzip); editor gains a master `social_enabled` switch (home tab), with
+    hidden/shown/order/labels round-tripped through `...cfg.social`.
+  - *official-API channels → production grade* (all fixes tested):
+    - **Zalo credential-key bug (🔴 was silently killing prod Zalo)**: modal
+      posted `app_secret` but the backend reads `oa_secret` everywhere → webhook
+      signature verification skipped + ~1h token never refreshed. Fixed the modal
+      field name + backend `app_secret` fallback (adapter + hook).
+    - **email connect was broken end-to-end**: modal `host/port/user/auth_type`
+      landed in `config` but the adapter reads them from ENCRYPTED credentials.
+      Rewrote the email connect branch to remap modal fields → adapter keys
+      (`username`→imap_user/smtp_user, `password`→imap_password/smtp_password,
+      `auth_type`+`oauth_*`→credentials); OAuth modal gained client_id/secret/
+      token_endpoint (provider→endpoint derived server-side).
+    - **line_oa inbound was dead**: connect now calls `adapter.set_webhook` and
+      surfaces `/hooks/line/{secret}` (added to `_HOOK_PATH`/needs_hook_secret);
+      also mirrors `channel_access_token`→`access_token` (adapters read the
+      latter — a second latent break).
+    - **messenger/instagram**: connect auto-calls `POST /{page}/subscribed_apps`;
+      instagram via-Page now resolves + stores the linked IG account id as
+      `external_id` (IG webhooks route by `entry.id` = IG id, not page id → was
+      dropping all via-Page inbound).
+    - **cross-cutting token rot**: `refresh_credentials` was implemented but never
+      called in prod. Added `sender.py` crons: `youtube_poll_task` (YouTube has no
+      webhook — polls comments every 2m + persists cursor), `refresh_tokens_task`
+      (proactive OAuth refresh ~5m before expiry, email/youtube/zalo),
+      `health_probe_task` (periodic re-probe → status/health for the UI). Removed
+      dead `_CRED_FIELDS`.
+  - *left for a future round (documented in the gallery cards)*: `line_app`
+    (backend scaffolded but needs a real LINE personal bridge + `bridge_line_url`
+    — LINE has no official personal API, ToS-risky), `telegram_app` (needs a
+    Telegram MTProto/TDLib user-account bridge — technically legit but new infra),
+    `tiktok_app` / personal `wechat` (no sanctioned personal messaging API — keep
+    `connectable:false`). `tiktok_business` is production-grade for COMMENTS; DM is
+    an external Meta/TikTok allow-list gate, not our code.
 - **Round 10 (2026-07-09): widget embed/save fix bundle + full YCloud BSP integration**
   - *widget embed*: the loader's chat iframe pointed at `/chat/index.html` but the
     api mounts `/widget-app` and nginx had no `/chat` route → the SPA catch-all

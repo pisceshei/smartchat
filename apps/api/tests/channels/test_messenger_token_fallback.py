@@ -74,3 +74,41 @@ async def test_fetch_profile_falls_back():
     adapter = _adapter(handler)
     await adapter.fetch_profile({"page_access_token": "PT3"}, "PSID")
     assert seen["access_token"] == "PT3"
+
+
+# -- connect-time webhook wiring (subscribe_page / resolve_ig_account) ------
+async def test_subscribe_page_posts_subscribed_apps():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["fields"] = request.url.params.get("subscribed_fields")
+        seen["token"] = request.url.params.get("access_token")
+        return httpx.Response(200, json={"success": True})
+
+    ok = await _adapter(handler).subscribe_page("PT", "page_1")
+    assert ok is True
+    assert seen["path"].endswith("/page_1/subscribed_apps")
+    assert "messages" in seen["fields"] and seen["token"] == "PT"
+
+
+async def test_subscribe_page_false_on_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": {"message": "no perms"}})
+
+    assert await _adapter(handler).subscribe_page("PT", "page_1") is False
+
+
+async def test_resolve_ig_account_returns_linked_id():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("fields") == "instagram_business_account"
+        return httpx.Response(200, json={"instagram_business_account": {"id": "17841400000000009"}})
+
+    assert await _adapter(handler).resolve_ig_account("PT", "page_1") == "17841400000000009"
+
+
+async def test_resolve_ig_account_none_when_unlinked():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "page_1"})  # no IG link
+
+    assert await _adapter(handler).resolve_ig_account("PT", "page_1") is None

@@ -4,6 +4,7 @@ channel ingress pipeline (handle_events) so widget messages take the exact
 same routing/unread/event path as every other channel (plan A.7)."""
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -73,6 +74,142 @@ async def any_agent_online(session: AsyncSession, redis: aioredis.Redis, workspa
     return any(s in (b"online", "online") for s in states if s)
 
 
+# icon_key + default label per channel family that can surface a visitor
+# "contact us" entry. Channels absent here (slack/youtube/tiktok/…) have no
+# visitor-facing deep link and are never offered.
+_SOCIAL_META: dict[str, tuple[str, str]] = {
+    "whatsapp_bsp": ("whatsapp", "WhatsApp"),
+    "whatsapp_cloud": ("whatsapp", "WhatsApp"),
+    "whatsapp_app": ("whatsapp", "WhatsApp"),
+    "telegram_bot": ("telegram", "Telegram"),
+    "messenger": ("messenger", "Messenger"),
+    "instagram": ("instagram", "Instagram"),
+    "line_oa": ("line", "LINE"),
+    "email": ("email", "Email"),
+    "vk": ("vk", "VK"),
+    "zalo_app": ("zalo", "Zalo"),
+    "wechat_kf": ("wechat", "WeChat"),
+}
+
+# personal-number / internal channels never auto-shown to the public web (would
+# leak a private phone or an internal workspace); the admin can opt them in.
+_SOCIAL_DEFAULT_OFF = frozenset({"whatsapp_app"})
+
+
+def _digits(value: str | None) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
+def channel_contact_entry(acct: ChannelAccount) -> dict[str, Any] | None:
+    """Derive a SAFE visitor contact entry from a connected account. Returns
+    {channel_type, label, kind, url|value, icon_key} or None when no public
+    handle is available (probe failed, no link). NEVER exposes external_id or
+    health beyond the single derived link — the bootstrap endpoint is public.
+    kind="link" opens a deep link; kind="copy" surfaces an id to copy (channels
+    with no URL scheme, e.g. WeChat)."""
+    meta = _SOCIAL_META.get(acct.channel_type)
+    if meta is None:
+        return None
+    icon_key, label = meta
+    health = acct.health or {}
+    ext = acct.external_id or ""
+    ct = acct.channel_type
+    url: str | None = None
+    if ct == "whatsapp_bsp":
+        d = _digits(ext)
+        url = f"https://wa.me/{d}" if d else None
+    elif ct == "whatsapp_cloud":
+        d = _digits(health.get("display_phone_number"))
+        url = f"https://wa.me/{d}" if d else None
+    elif ct == "whatsapp_app":
+        d = _digits(health.get("phone"))
+        url = f"https://wa.me/{d}" if d else None
+    elif ct == "telegram_bot":
+        u = str(health.get("username") or "").lstrip("@")
+        url = f"https://t.me/{u}" if u else None
+    elif ct == "messenger":
+        url = f"https://m.me/{ext}" if ext else None
+    elif ct == "line_oa":
+        bid = str(health.get("basic_id") or "").lstrip("@")
+        url = f"https://line.me/R/ti/p/@{bid}" if bid else None
+    elif ct == "email":
+        addr = ext or health.get("address")
+        url = f"mailto:{addr}" if addr else None
+    elif ct == "vk":
+        name = health.get("screen_name")
+        url = f"https://vk.me/{name}" if name else None
+    elif ct == "zalo_app":
+        url = f"https://zalo.me/{ext}" if ext else None
+    if url:
+        return {"channel_type": ct, "label": label, "kind": "link",
+                "url": url, "icon_key": icon_key}
+    # Non-linkable channels: only surface a copyable value that is a REAL public
+    # handle. WeChat 客服 has no URL scheme; its external_id is the internal WeCom
+    # corp_id, which must never be exposed on the public bootstrap and is useless
+    # to a visitor anyway — so only emit a copy entry if a genuine display handle
+    # was captured (never falls back to external_id). instagram likewise has no
+    # stored public @username → no entry. Both return None until a usable public
+    # handle exists.
+    if ct == "wechat_kf":
+        handle = health.get("contact") or health.get("kf_handle")
+        if handle:
+            return {"channel_type": ct, "label": label, "kind": "copy",
+                    "value": str(handle), "icon_key": icon_key}
+    return None
+
+
+async def _connected_social_accounts(
+    session: AsyncSession, workspace_id
+) -> list[ChannelAccount]:
+    return list(
+        (
+            await session.execute(
+                select(ChannelAccount)
+                .where(
+                    ChannelAccount.workspace_id == workspace_id,
+                    ChannelAccount.enabled.is_(True),
+                    ChannelAccount.status == "active",
+                    ChannelAccount.channel_type != "widget",
+                )
+                .order_by(ChannelAccount.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _assemble_social(
+    session: AsyncSession, workspace_id, social_cfg: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the public social-entry block from all connected channels, filtered
+    by the widget's per-channel visibility config. Auto by default: connect a
+    channel → its entry appears (except personal/internal, opt-in)."""
+    if not social_cfg.get("enabled", True):
+        return {"enabled": False, "channels": []}
+    hidden = set(social_cfg.get("hidden") or [])
+    shown = set(social_cfg.get("shown") or [])
+    labels = social_cfg.get("labels") or {}
+    order = list(social_cfg.get("order") or [])
+    entries: list[dict[str, Any]] = []
+    for acct in await _connected_social_accounts(session, workspace_id):
+        ct = acct.channel_type
+        if ct in hidden:
+            continue
+        if ct in _SOCIAL_DEFAULT_OFF and ct not in shown:
+            continue
+        entry = channel_contact_entry(acct)
+        if entry is None:
+            continue
+        if ct in labels and labels[ct]:
+            entry["label"] = str(labels[ct])
+        entries.append(entry)
+    if order:
+        rank = {ct: i for i, ct in enumerate(order)}
+        entries.sort(key=lambda e: rank.get(e["channel_type"], len(order)))
+    return {"enabled": True, "channels": entries}
+
+
 async def assemble_bootstrap(
     session: AsyncSession, redis: aioredis.Redis, widget: Widget
 ) -> dict[str, Any]:
@@ -85,6 +222,7 @@ async def assemble_bootstrap(
     appearance["show_branding"] = not (widget.brand_removed and brand_removal_allowed)
     offline = dict(cfg.get("offline") or {})
     offline["is_online"] = online
+    social = await _assemble_social(session, widget.workspace_id, dict(cfg.get("social") or {}))
     return {
         "widget_key": widget.widget_key,
         "brand": cfg.get("brand") or {"name": widget.name or None},
@@ -93,6 +231,7 @@ async def assemble_bootstrap(
         "home": cfg.get("home"),
         "pre_chat": cfg.get("pre_chat"),
         "offline": offline,
+        "social": social,
         "features": cfg.get("features") or {"file_upload": True, "emoji": True},
     }
 

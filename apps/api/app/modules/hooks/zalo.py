@@ -57,7 +57,9 @@ async def zalo_webhook(
         return Response(status_code=400, content="invalid json")
 
     credentials = await get_credentials(session, acct)
-    oa_secret = credentials.get("oa_secret", "")
+    # oa_secret is canonical; app_secret is a fallback for accounts connected
+    # before the frontend field name was corrected.
+    oa_secret = credentials.get("oa_secret") or credentials.get("app_secret") or ""
     app_id = str(
         data.get("app_id") or (acct.config or {}).get("app_id") or credentials.get("app_id") or ""
     )

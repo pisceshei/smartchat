@@ -541,6 +541,16 @@ export interface WidgetConfigJson {
     banners?: WidgetBannerItem[];
     reply_hint?: string;
   };
+  /** Auto social-contact entries. enabled is the master toggle; hidden/shown/
+   *  order/labels are honored by the backend and round-tripped even when the
+   *  editor only surfaces the master switch. */
+  social?: {
+    enabled?: boolean;
+    hidden?: string[];
+    shown?: string[];
+    order?: string[];
+    labels?: Record<string, string>;
+  };
   pre_chat?: {
     enabled?: boolean;
     required_before_chat?: boolean;

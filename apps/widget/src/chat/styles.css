@@ -806,6 +806,52 @@ body {
   margin-top: 3px;
 }
 
+/* ---------- social contact entries ---------- */
+.sc-social {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sc-social-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sc-text-2);
+  padding: 0 2px;
+}
+.sc-social-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sc-social-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  background: var(--sc-surface);
+  padding: 8px 14px 8px 10px;
+  cursor: pointer;
+  font-family: var(--sc-font);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sc-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.sc-social-item:hover {
+  border-color: var(--sc-primary);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+}
+.sc-social-ic {
+  display: inline-flex;
+  color: var(--sc-primary);
+  flex: 0 0 auto;
+}
+.sc-social-label {
+  white-space: nowrap;
+}
+
 /* ---------- bottom nav ---------- */
 .sc-nav {
   flex: 0 0 auto;

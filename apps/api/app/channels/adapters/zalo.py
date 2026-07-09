@@ -360,7 +360,9 @@ class ZaloAdapter(BaseAdapter):
         app_id = credentials.get("app_id")
         if not app_id and account is not None:
             app_id = (getattr(account, "config", None) or {}).get("app_id")
-        secret_key = credentials.get("oa_secret")
+        # oa_secret is the canonical key; app_secret is accepted as a fallback
+        # for accounts connected before the frontend field was corrected.
+        secret_key = credentials.get("oa_secret") or credentials.get("app_secret")
         if not (refresh_token and app_id and secret_key):
             return None
         try:

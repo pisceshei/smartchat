@@ -72,16 +72,27 @@ def _member(ws_id: uuid.UUID | None = None) -> MemberContext:
 
 
 class FakeAdapter:
-    def __init__(self, *, validate_exc: Exception | None = None):
+    def __init__(self, *, validate_exc: Exception | None = None, ig_account: str | None = None):
         self.validate_exc = validate_exc
+        self.ig_account = ig_account
+        self.subscribed = None
 
     async def validate_token(self, token):
         if self.validate_exc is not None:
             raise self.validate_exc
         return {"id": 42, "username": "bot"}
 
-    async def set_webhook(self, token, url, secret):
+    async def set_webhook(self, *args):
+        # telegram calls (token, url, secret); line_oa calls (access_token, url)
+        self.set_webhook_args = args
         return True
+
+    async def subscribe_page(self, access_token, page_id, fields=None):
+        self.subscribed = (access_token, page_id)
+        return True
+
+    async def resolve_ig_account(self, access_token, page_id):
+        return self.ig_account
 
     async def check_health(self, acct, credentials):
         return HealthResult(ok=True, status="active", detail={})
@@ -147,15 +158,31 @@ async def test_messenger_page_token_copied_to_access_token(monkeypatch, no_quota
     assert captured_creds["page_access_token"] == "PT"
 
 
-async def test_instagram_via_page_mode(monkeypatch, no_quota, captured_creds):
-    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: FakeAdapter())
+async def test_instagram_via_page_mode_resolves_ig_external_id(monkeypatch, no_quota, captured_creds):
+    # IG webhooks route by the linked IG Business account id, not the page id
+    adapter = FakeAdapter(ig_account="17841400000000009")
+    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: adapter)
     body = ch_router.ConnectBody(name="ig", page_access_token="PT", page_id="99")
     out = await ch_router.connect_account(
         "instagram", body, _member(), FakeSession(results=[FakeResult(scalar=None)])
     )
-    assert out["external_id"] == "99"
+    assert out["external_id"] == "17841400000000009"  # resolved IG id, not page 99
+    assert out["config"]["page_id"] == "99"  # page id kept for the send path
     assert captured_creds["access_token"] == "PT"
+    assert adapter.subscribed == ("PT", "99")
     assert not out["config"].get("ig_login")
+
+
+async def test_instagram_via_page_falls_back_to_page_id_when_ig_unresolved(
+    monkeypatch, no_quota, captured_creds
+):
+    adapter = FakeAdapter(ig_account=None)  # link can't be resolved
+    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: adapter)
+    body = ch_router.ConnectBody(name="ig", page_access_token="PT", page_id="99")
+    out = await ch_router.connect_account(
+        "instagram", body, _member(), FakeSession(results=[FakeResult(scalar=None)])
+    )
+    assert out["external_id"] == "99"  # falls back so connect still lands
 
 
 async def test_instagram_ig_login_mode_accepted(monkeypatch, no_quota, captured_creds):
@@ -179,6 +206,75 @@ async def test_instagram_missing_fields_is_clean_422(monkeypatch, no_quota):
     assert ei.value.status_code == 422
     detail = str(ei.value.detail)
     assert "page_access_token" in detail and "ig_user_id" in detail
+
+
+# --------------------------------------------------------------------------
+# connect: email modal fields → adapter credential keys (the send/auth path
+# reads host/user/password from ENCRYPTED credentials, so the flat modal body
+# must be remapped there — a secret-hint split alone strands host/user/auth).
+# --------------------------------------------------------------------------
+async def test_email_connect_maps_modal_fields_to_credentials(monkeypatch, no_quota, captured_creds):
+    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: FakeAdapter())
+    body = ch_router.ConnectBody(
+        name="Support", address="Support@Example.com", auth_type="password",
+        imap_host="imap.example.com", imap_port=993, imap_ssl=True,
+        smtp_host="smtp.example.com", smtp_port=465, smtp_ssl=True,
+        username="support@example.com", password="app-pw",
+    )
+    out = await ch_router.connect_account(
+        "email", body, _member(), FakeSession(results=[FakeResult(scalar=None)])
+    )
+    assert out["external_id"] == "support@example.com"  # lowercased
+    assert captured_creds["imap_host"] == "imap.example.com"
+    assert captured_creds["smtp_host"] == "smtp.example.com"
+    assert captured_creds["imap_user"] == captured_creds["smtp_user"] == "support@example.com"
+    assert captured_creds["imap_password"] == captured_creds["smtp_password"] == "app-pw"
+    assert captured_creds["smtp_tls"] is True
+    # secrets never leak into the JSONB config (which is echoed back)
+    assert all("password" not in k for k in out["config"])
+    assert out["config"]["address"] == "support@example.com"
+
+
+async def test_email_connect_oauth2_derives_token_endpoint(monkeypatch, no_quota, captured_creds):
+    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: FakeAdapter())
+    body = ch_router.ConnectBody(
+        name="Gmail", address="me@gmail.com", auth_type="oauth2", oauth_provider="gmail",
+        imap_host="imap.gmail.com", smtp_host="smtp.gmail.com", username="me@gmail.com",
+        oauth_access_token="AT", oauth_refresh_token="RT",
+        oauth_client_id="cid", oauth_client_secret="csec",
+    )
+    await ch_router.connect_account(
+        "email", body, _member(), FakeSession(results=[FakeResult(scalar=None)])
+    )
+    assert captured_creds["auth_type"] == "oauth2"
+    assert captured_creds["oauth_access_token"] == "AT"
+    assert captured_creds["oauth_refresh_token"] == "RT"
+    assert captured_creds["oauth_client_id"] == "cid"
+    assert captured_creds["oauth_client_secret"] == "csec"
+    # provider → token endpoint derived so refresh_credentials can run
+    assert captured_creds["oauth_token_endpoint"] == "https://oauth2.googleapis.com/token"
+    assert "imap_password" not in captured_creds  # oauth mode: no password path
+
+
+# --------------------------------------------------------------------------
+# connect: line_oa — mirror channel_access_token→access_token (adapters read
+# access_token) + auto-register webhook + surface URL/secret to the operator.
+# --------------------------------------------------------------------------
+async def test_line_oa_connect_mirrors_token_and_surfaces_webhook(monkeypatch, no_quota, captured_creds):
+    adapter = FakeAdapter()
+    monkeypatch.setattr(ch_router, "get_adapter", lambda ct: adapter)
+    body = ch_router.ConnectBody(
+        name="OA", channel_id="1656500000", channel_secret="SEC", channel_access_token="LONG_TOKEN",
+    )
+    out = await ch_router.connect_account(
+        "line_oa", body, _member(), FakeSession(results=[FakeResult(scalar=None)])
+    )
+    assert out["external_id"] == "1656500000"
+    # adapters read access_token; modal posts channel_access_token
+    assert captured_creds["access_token"] == "LONG_TOKEN"
+    assert adapter.set_webhook_args[0] == "LONG_TOKEN"  # set_webhook(access_token, url)
+    assert adapter.set_webhook_args[1].endswith(f"/hooks/line/{out['webhook_secret']}")
+    assert out["webhook_url"].endswith(f"/hooks/line/{out['webhook_secret']}")
 
 
 # --------------------------------------------------------------------------
@@ -290,9 +386,14 @@ async def test_bootstrap_passes_home_through(monkeypatch):
     async def online(session, redis, ws):
         return False
 
+    async def no_social(session, workspace_id):
+        return []
+
     monkeypatch.setattr(wsvc, "effective_limits", limits)
     monkeypatch.setattr(wsvc, "any_agent_online", online)
+    monkeypatch.setattr(wsvc, "_connected_social_accounts", no_social)
     home = {"enabled": True, "banners": [{"image_url": "https://x/1.png"}], "reply_hint": "秒回"}
     w = Widget(widget_key="k", name="n", config={"home": home}, brand_removed=False)
     out = await wsvc.assemble_bootstrap(None, None, w)
     assert out["home"] == home
+    assert out["social"] == {"enabled": True, "channels": []}
