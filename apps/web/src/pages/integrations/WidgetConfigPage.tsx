@@ -107,7 +107,14 @@ export function WidgetConfigPage() {
         : {},
     [widget.data],
   );
-  const srcDoc = useMemo(() => previewHtml(values ?? seed), [values, seed]);
+  // Form.useWatch([]) returns {} (not undefined) on first render and stays
+  // partial until fields register, so `values ?? seed` isn't enough — merge
+  // seed UNDER values so saved brand/greeting show immediately and every real
+  // edit still overrides them.
+  const srcDoc = useMemo(
+    () => previewHtml({ ...seed, ...(values ?? {}) }),
+    [values, seed],
+  );
 
   // Re-hydrate the form when fresh data lands (antd initialValues only apply
   // on first mount). Skip while the user has unsaved edits — EXCEPT right
