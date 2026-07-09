@@ -7,7 +7,9 @@ WORKDIR /w
 COPY apps/widget/package.json apps/widget/package-lock.json ./
 RUN npm ci
 COPY apps/widget ./
-RUN npm run build:loader && npm run build:chat
+# full build = loader + chat + size-check.mjs (25KB loader / 120KB chat gzip
+# budget gate) so an oversized bundle fails the image build instead of shipping
+RUN npm run build
 
 FROM python:3.12-slim AS base
 

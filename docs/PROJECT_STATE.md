@@ -81,6 +81,45 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   tab (`InboxPage` defaults to `"ai"`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Round 10 (2026-07-09): widget embed/save fix bundle + full YCloud BSP integration**
+  - *widget embed*: the loader's chat iframe pointed at `/chat/index.html` but the
+    api mounts `/widget-app` and nginx had no `/chat` route → the SPA catch-all
+    served the ADMIN LOGIN page inside the widget panel (matched the user's shop
+    screenshot). Fixed: `loader/chatUrl.ts` emits `/widget-app/index.html`
+    (contract-tested); the api double-mounts `/chat` as a legacy alias for
+    loaders cached up to a day; nginx gained `location ^~ /chat/` plus THREE
+    Chatwoot-leftover neutralizers (`= /widget` blank page, `^~ /packs/` 204,
+    `= /cable` 204) so un-removed old embeds can never render the login page
+    again. The shop's old Chatwoot snippet still should be deleted (DEPLOY.md §7).
+  - *widget save*: 儲存 silently no-oped when a hidden-tab field failed
+    validation. Now: fully-empty banner/prechat rows are auto-pruned before
+    validation, errors name the tab/row/field and jump there, the live preview
+    seeds from saved values (no more "SmartChat" default flash), and the form
+    re-hydrates after save. Extracted to `widgetConfigForm.ts` + vitest. The
+    loader route now 404s (no-store) unknown/disabled widget keys, fail-open on
+    DB errors; `backend.Dockerfile` runs the size-budget gate.
+    NOTE: `allowed_domains` remains record-only (enforced nowhere) — hint text
+    says so; enforcement is future work.
+  - *YCloud BSP (whatsapp_bsp) now end-to-end*: NEW `POST /hooks/ycloud`
+    (app-level; routes by business number with `_plus` normalization; verifies
+    `YCloud-Signature` t/s HMAC fail-closed when a secret is stored, warn-accept
+    otherwise; template.reviewed applied directly to MsgTemplate). Connect
+    auto-registers the webhook endpoint (GET-dedup → POST; secret →
+    encrypted credentials via the new `ConnectResult.credentials_patch`;
+    sibling-account secret copy for second numbers; manual-console fallback
+    surfaced in the modal). Two-step connect UX: api_key → 載入號碼 → pick
+    (fixes the phone_number_id/phone_number mismatch; waba_id persisted).
+    Media fetch sends X-API-Key (refs are kind=ycloud_media). Template
+    lifecycle: sync widened to BSP (`import_missing` pulls console-built
+    templates in), NEW `POST /msg-templates/whatsapp/{id}/submit` creates the
+    template on YCloud (409 → adopts the existing remote), review webhook +
+    6h cron reconcile statuses. Broadcasts: TEMPLATE_CHANNEL_MAP +
+    WINDOW/TEMPLATE_CHANNELS now include whatsapp_bsp; ratelimit 20/s.
+    Frontend: `galleryType()` maps whatsapp_cloud/whatsapp_bsp → the
+    WhatsApp API card (un-bricks the broadcast tile + WABA selectors);
+    `_serialize_account` now returns `display_name`.
+    DEPLOY: server .env must have `PUBLIC_BASE_URL=https://chat.chilling.com.hk`
+    (drives webhook auto-registration).
 - **Round 9 (2026-07-09): WhatsApp lid-as-phone + outbound/AI realtime rendering**
   (deployed; production E2E per the checklist below). Two user-reported bugs:
   a WhatsApp contact showed phone `+56985642876983` — a **lid**, not a phone

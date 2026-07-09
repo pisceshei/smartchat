@@ -109,7 +109,10 @@ def test_parse_inbound_text():
     assert m.external_timestamp is not None and m.external_timestamp.year == 2026
 
 
-def test_parse_inbound_image_with_link_makes_url_media_ref():
+def test_parse_inbound_image_makes_ycloud_media_ref():
+    # YCloud media links require the X-API-Key header, so the ref is ALWAYS
+    # kind=ycloud_media (fetch_media adds auth) — a bare "url" ref would be
+    # fetched header-less by the base adapter and 401.
     adapter = WhatsAppBspAdapter()
     ev = {
         "type": "whatsapp.inbound_message.received",
@@ -132,10 +135,11 @@ def test_parse_inbound_image_with_link_makes_url_media_ref():
     ref = m.media_refs[0]
     assert ref.block_index == 0
     assert ref.ref == {
-        "kind": "url",
+        "kind": "ycloud_media",
         "url": "https://cdn.ycloud.com/media_1.jpg",
-        "filename": None,
+        "media_id": "media_1",
         "mime": "image/jpeg",
+        "filename": None,
     }
 
 
@@ -273,21 +277,31 @@ async def test_connect_validate_ycloud_lists_numbers():
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen["url"] = str(request.url)
-        seen["api_key"] = request.headers.get("X-API-Key")
-        return _json_response(
-            {
-                "items": [
-                    {
-                        "id": "pn_1",
-                        "phoneNumber": "+85251234567",
-                        "verifiedName": "Acme HK",
-                        "wabaId": "waba_1",
-                        "qualityRating": "GREEN",
-                    }
-                ]
-            }
-        )
+        path = request.url.path
+        if path.endswith("/whatsapp/phoneNumbers"):
+            seen["numbers_url"] = str(request.url)
+            seen["api_key"] = request.headers.get("X-API-Key")
+            return _json_response(
+                {
+                    "items": [
+                        {
+                            "id": "pn_1",
+                            "phoneNumber": "+85251234567",
+                            "verifiedName": "Acme HK",
+                            "wabaId": "waba_1",
+                            "qualityRating": "GREEN",
+                        }
+                    ]
+                }
+            )
+        if path.endswith("/webhookEndpoints") and request.method == "GET":
+            return _json_response({"items": []})
+        if path.endswith("/webhookEndpoints") and request.method == "POST":
+            import json as _json
+
+            seen["webhook_body"] = _json.loads(request.content)
+            return _json_response({"id": "we_1", "secret": "whsec_new"})
+        return _json_response({}, status=404)
 
     adapter = _adapter_with(handler)
     cr = await adapter.connect_validate({"bsp": "ycloud"}, {"api_key": "sk_live_1"})
@@ -296,8 +310,16 @@ async def test_connect_validate_ycloud_lists_numbers():
     assert cr.name == "Acme HK"
     assert cr.config_patch == {"bsp": "ycloud", "waba_id": "waba_1"}
     assert cr.needs_webhook_secret is False
-    assert seen["url"].startswith("https://api.ycloud.com/v2/whatsapp/phoneNumbers")
+    assert seen["numbers_url"].startswith("https://api.ycloud.com/v2/whatsapp/phoneNumbers")
     assert seen["api_key"] == "sk_live_1"
+    # fresh webhook endpoint registered → secret captured for encrypted creds
+    assert cr.credentials_patch == {"webhook_secret": "whsec_new"}
+    assert cr.health.detail["webhook"] == "registered"
+    assert set(seen["webhook_body"]["enabledEvents"]) == {
+        "whatsapp.inbound_message.received",
+        "whatsapp.message.updated",
+        "whatsapp.template.reviewed",
+    }
 
 
 async def test_connect_validate_ycloud_picks_requested_number():
@@ -385,3 +407,167 @@ async def test_registered_under_whatsapp_bsp():
 
     adapter = get_adapter("whatsapp_bsp")
     assert adapter.channel_type == "whatsapp_bsp"
+
+
+# --------------------------------------------------------------------------
+# round 10: media auth, number listing, webhook registration, template send
+# --------------------------------------------------------------------------
+async def test_fetch_media_sends_api_key_header():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("X-API-Key")
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=b"JPEGDATA", headers={"content-type": "image/jpeg"})
+
+    adapter = _adapter_with(handler)
+    got = await adapter.fetch_media(
+        _account(),
+        {"api_key": "k1"},
+        {"kind": "ycloud_media", "url": "https://api.ycloud.com/v2/whatsapp/media/download/x",
+         "media_id": "m1", "mime": "image/jpeg", "filename": "a.jpg"},
+    )
+    assert got is not None and got.data == b"JPEGDATA"
+    assert got.mime == "image/jpeg" and got.filename == "a.jpg"
+    assert seen["auth"] == "k1"
+
+
+async def test_fetch_media_retries_bare_on_forbidden_link():
+    calls: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        has_key = "X-API-Key" in request.headers
+        calls.append(has_key)
+        if has_key:
+            return httpx.Response(403)
+        return httpx.Response(200, content=b"OK")
+
+    adapter = _adapter_with(handler)
+    got = await adapter.fetch_media(
+        _account(), {"api_key": "k"}, {"kind": "ycloud_media", "url": "https://cdn.x/y.jpg"}
+    )
+    assert got is not None and got.data == b"OK"
+    assert calls == [True, False]
+
+
+async def test_fetch_media_media_id_fallback_endpoint():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=b"D")
+
+    adapter = _adapter_with(handler)
+    got = await adapter.fetch_media(
+        _account(), {"api_key": "k"}, {"kind": "ycloud_media", "media_id": "m9"}
+    )
+    assert got is not None
+    assert seen["url"] == "https://api.ycloud.com/v2/whatsapp/medias/m9"
+
+
+async def test_fetch_media_non_ycloud_ref_falls_back_to_base():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "X-API-Key" not in request.headers
+        return httpx.Response(200, content=b"P")
+
+    adapter = _adapter_with(handler)
+    got = await adapter.fetch_media(
+        _account(), {"api_key": "k"}, {"kind": "url", "url": "https://public.cdn/x.png"}
+    )
+    assert got is not None and got.data == b"P"
+
+
+async def test_list_phone_numbers_contract_and_auth_error():
+    def ok(request: httpx.Request) -> httpx.Response:
+        return _json_response(
+            {"items": [{"id": "pn1", "phoneNumber": "+8521111", "verifiedName": "A",
+                        "wabaId": "W", "qualityRating": "GREEN",
+                        "messagingLimit": "TIER_1K", "status": "CONNECTED",
+                        "displayPhoneNumber": "+852 1111"}]}
+        )
+
+    nums = await _adapter_with(ok).list_phone_numbers("k")
+    assert nums == [
+        {"id": "pn1", "phone_number": "+8521111", "display_phone_number": "+852 1111",
+         "verified_name": "A", "waba_id": "W", "quality_rating": "GREEN",
+         "messaging_limit": "TIER_1K", "status": "CONNECTED"}
+    ]
+
+    def bad(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"code": "UNAUTHORIZED"}})
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="API key"):
+        await _adapter_with(bad).list_phone_numbers("nope")
+
+
+async def test_connect_reuses_existing_webhook_endpoint_no_duplicate_post():
+    posts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/whatsapp/phoneNumbers"):
+            return _json_response({"items": [{"phoneNumber": "+8521", "wabaId": "W"}]})
+        if path.endswith("/webhookEndpoints") and request.method == "GET":
+            from apps.api.app.settings import get_settings
+
+            return _json_response(
+                {"items": [{"id": "we0", "url": f"{get_settings().public_base_url}/hooks/ycloud"}]}
+            )
+        if request.method == "POST":
+            posts.append(path)
+            return _json_response({"secret": "should-not-happen"})
+        return _json_response({}, status=404)
+
+    cr = await _adapter_with(handler).connect_validate({"bsp": "ycloud"}, {"api_key": "k"})
+    assert cr.health.detail["webhook"] == "existing"
+    assert cr.credentials_patch == {}
+    assert posts == []  # duplicate endpoint would double-deliver every event
+
+
+async def test_connect_webhook_registration_failure_is_nonfatal():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/whatsapp/phoneNumbers"):
+            return _json_response({"items": [{"phoneNumber": "+8521", "wabaId": "W"}]})
+        return httpx.Response(500)
+
+    cr = await _adapter_with(handler).connect_validate({"bsp": "ycloud"}, {"api_key": "k"})
+    assert cr.health.ok  # connect still succeeds
+    assert cr.health.detail["webhook"] == "manual"
+    assert cr.credentials_patch == {}
+
+
+async def test_send_template_payload_passthrough():
+    """A rendered TemplateBlock reaches YCloud verbatim as
+    {"from","to","type":"template","template":{name,language,components}}."""
+    from py_contracts.content import TemplateBlock
+
+    recorded: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        recorded.update(_json.loads(request.content))
+        return _json_response({"id": "y1", "wamid": "wamid.T1", "status": "accepted"})
+
+    adapter = _adapter_with(handler)
+    content = MessageContent(
+        blocks=[
+            TemplateBlock(
+                template_name="order_update",
+                language="zh_HK",
+                components={"components": [
+                    {"type": "body", "parameters": [{"type": "text", "text": "Ken"}]}
+                ]},
+            )
+        ]
+    )
+    payloads = adapter.render(content)
+    assert payloads and payloads[0]["type"] == "template"
+    res = await adapter.send(_account(), {"api_key": "k"}, "85298765432", payloads[0])
+    assert res.ok and res.external_message_id == "wamid.T1"
+    assert recorded["type"] == "template"
+    assert recorded["template"]["name"] == "order_update"
+    assert recorded["template"]["language"] == {"code": "zh_HK"}
+    assert recorded["from"] == "+85251234567"

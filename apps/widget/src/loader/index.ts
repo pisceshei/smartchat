@@ -11,6 +11,7 @@
  */
 import type { WidgetBootstrap } from "../shared/config";
 import { DEFAULT_PRIMARY, localized } from "../shared/config";
+import { buildChatIframeUrl } from "./chatUrl";
 import type {
   ChatToLoader,
   Endpoints,
@@ -238,10 +239,7 @@ declare global {
     iframe.className = "sc-frame";
     iframe.title = (cfg.brand && cfg.brand.name) || "SmartChat";
     iframe.setAttribute("allow", "microphone; clipboard-write");
-    const chatUrl = new URL(assetBase + "/chat/index.html");
-    chatUrl.searchParams.set("k", key);
-    chatUrl.searchParams.set("po", location.origin);
-    chatUrl.searchParams.set("lang", lang);
+    const chatUrl = buildChatIframeUrl(assetBase, key, location.origin, lang);
     chatOrigin = chatUrl.origin;
     iframe.src = chatUrl.toString();
     panel.appendChild(iframe);

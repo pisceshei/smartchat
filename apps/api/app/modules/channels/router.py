@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...channels.creds import set_credentials
+from ...channels.creds import get_credentials, set_credentials
 from ...channels.registry import get_adapter, registered_channel_types
 from ...db import get_session
 from ...deps import MemberContext, require_permission
@@ -104,6 +104,9 @@ def _serialize_account(acct: ChannelAccount) -> dict[str, Any]:
         "id": str(acct.id),
         "channel_type": acct.channel_type,
         "name": acct.name,
+        # the SPA types/pages read display_name (ChannelsPage manage drawer,
+        # BroadcastWizard account picker, TemplatesPage WABA selector)
+        "display_name": acct.name,
         "external_id": acct.external_id,
         "status": acct.status,
         "health": acct.health or {},
@@ -200,6 +203,29 @@ async def _check_channel_quota(
     ).scalar_one()
     if count >= int(cap):
         raise HTTPException(402, "channel account quota reached — upgrade your plan")
+
+
+class BspPreviewBody(BaseModel):
+    api_key: str = Field(min_length=8)
+    bsp: str = "ycloud"
+
+
+@router.post("/channels/whatsapp_bsp/preview-numbers")
+async def preview_bsp_numbers(
+    body: BspPreviewBody,
+    member: MemberContext = Depends(require_permission("channels.manage")),
+) -> list[dict[str, Any]]:
+    """List the BSP account's WhatsApp numbers for the connect modal's picker.
+    No DB writes; the key is only used for this call."""
+    if body.bsp != "ycloud":
+        raise HTTPException(422, f"BSP '{body.bsp}' not implemented — only ycloud")
+    adapter = get_adapter("whatsapp_bsp")
+    try:
+        return await adapter.list_phone_numbers(body.api_key)
+    except ValueError as e:
+        raise HTTPException(422, f"ycloud: {e}") from e
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"ycloud: {e}") from e
 
 
 @router.post("/channels/{channel_type}/accounts")
@@ -341,9 +367,35 @@ async def connect_account(
         name = name or cr.name
         if cr.config_patch:
             config = {**config, **cr.config_patch}
+        if cr.credentials_patch:
+            # connect-time secrets (e.g. a provider webhook-endpoint secret)
+            # join the envelope-encrypted credentials, never the JSONB config
+            credentials = {**credentials, **cr.credentials_patch}
         health_detail = {**health_detail, **cr.health.detail}
         needs_hook_secret = cr.needs_webhook_secret
         dispatch_status = "active" if cr.health.ok else cr.health.status
+
+        # YCloud: the webhook-endpoint secret is only disclosed once, at CREATE.
+        # When the endpoint pre-exists we must recover it, or the hook degrades
+        # to permanent unsigned-accept. Search ANY whatsapp_bsp account with
+        # the same api_key — enabled OR disabled, across workspaces (the secret
+        # is a property of the YCloud account, shared by all its numbers). This
+        # covers: a 2nd number on the same key, and reconnecting a soft-deleted
+        # account (whose own disabled row still holds the secret).
+        if channel_type == "whatsapp_bsp" and not credentials.get("webhook_secret"):
+            sibs = (
+                await session.execute(
+                    select(ChannelAccount).where(
+                        ChannelAccount.channel_type == "whatsapp_bsp",
+                    )
+                )
+            ).scalars().all()
+            for sib in sibs:
+                sc = await get_credentials(session, sib)
+                if sc.get("api_key") == credentials.get("api_key") and sc.get("webhook_secret"):
+                    credentials["webhook_secret"] = sc["webhook_secret"]
+                    health_detail["webhook"] = "registered"
+                    break
 
     # (channel_type, external_id) is globally UNIQUE (webhook routing key). A row
     # may still exist but be disabled from a previous "remove" (soft-delete) —
@@ -417,6 +469,18 @@ async def connect_account(
         out["webhook_secret"] = acct.webhook_secret
         out["webhook_url"] = (
             f"{settings.public_base_url}/hooks/{_HOOK_PATH[channel_type]}/{acct.webhook_secret}"
+        )
+    # YCloud: auto-registration failed or the endpoint pre-existed with no
+    # recoverable secret — tell the operator to finish setup in the console
+    # (and optionally re-connect pasting the endpoint secret).
+    if (
+        channel_type == "whatsapp_bsp"
+        and health_detail.get("webhook") in ("manual", "existing")
+        and not credentials.get("webhook_secret")
+    ):
+        out["webhook_manual"] = True
+        out["webhook_url"] = (
+            health_detail.get("webhook_url") or f"{settings.public_base_url}/hooks/ycloud"
         )
     return out
 

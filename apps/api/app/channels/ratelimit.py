@@ -29,6 +29,11 @@ class RateSpec:
 
 RATES: dict[str, RateSpec] = {
     "whatsapp_cloud": RateSpec(rate_per_s=80.0, burst=80.0),
+    # BSP gateways (YCloud) throttle per API account well below Meta's 80/s;
+    # Meta's own per-number tiers surface asynchronously as RATE_LIMITED
+    # callbacks we already classify. 20/s covers inbox/flow bursts while
+    # broadcast pacing (interval_seconds >= 3) dominates marketing sends.
+    "whatsapp_bsp": RateSpec(rate_per_s=20.0, burst=40.0),
     "messenger": RateSpec(rate_per_s=250.0, burst=250.0),
     "instagram": RateSpec(rate_per_s=250.0, burst=250.0),
     "telegram_bot": RateSpec(rate_per_s=30.0, burst=30.0, per_chat_rate_per_s=1.0, per_chat_burst=1.0),

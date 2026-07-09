@@ -44,8 +44,10 @@ SNIPPET_LEN = 140
 # Channels whose platform enforces a customer-service window: outbound free-form
 # messages are rejected once the window is closed (WhatsApp allows approved
 # templates outside the window).
-WINDOW_CHANNELS: frozenset[str] = frozenset({"whatsapp_cloud", "messenger", "instagram"})
-TEMPLATE_CHANNELS: frozenset[str] = frozenset({"whatsapp_cloud"})
+WINDOW_CHANNELS: frozenset[str] = frozenset(
+    {"whatsapp_cloud", "whatsapp_bsp", "messenger", "instagram"}
+)
+TEMPLATE_CHANNELS: frozenset[str] = frozenset({"whatsapp_cloud", "whatsapp_bsp"})
 
 # Hard capability rejections (soft degradation — card→image+link etc. — is the
 # adapter's job per the capability matrix; only impossible sends fail here).

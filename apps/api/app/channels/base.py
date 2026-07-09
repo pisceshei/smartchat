@@ -380,6 +380,10 @@ class ConnectResult:
     name: str = ""
     health: HealthResult = field(default_factory=lambda: HealthResult(ok=True))
     config_patch: dict[str, Any] = field(default_factory=dict)
+    # secrets discovered at connect time (e.g. a provider webhook-endpoint
+    # secret) — merged into the envelope-ENCRYPTED credentials store by the
+    # channels router; config_patch is plaintext JSONB and must never carry them
+    credentials_patch: dict[str, Any] = field(default_factory=dict)
     needs_webhook_secret: bool = False
 
 

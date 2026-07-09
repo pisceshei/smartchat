@@ -32,7 +32,7 @@ import type {
   WhatsAppTemplate,
 } from "@/api/types";
 import { ChannelIcon } from "@/components/ChannelIcon";
-import { CHANNEL_NAME } from "@/constants/channels";
+import { CHANNEL_NAME, galleryType } from "@/constants/channels";
 import { t } from "@/i18n";
 import { dayjs, hhmmToMin, minToHHmm } from "@/utils/time";
 import { SegmentBuilder } from "./SegmentBuilder";
@@ -132,11 +132,14 @@ export function BroadcastWizard({ open, onClose }: { open: boolean; onClose: () 
 
   const connectedTypes = useMemo(() => {
     const set = new Set<string>();
-    for (const a of accounts.data ?? []) if (a.status !== "disconnected") set.add(a.channel_type);
+    for (const a of accounts.data ?? [])
+      if (a.status !== "disconnected") set.add(galleryType(a.channel_type));
     return set;
   }, [accounts.data]);
 
-  const channelAccounts = (accounts.data ?? []).filter((a) => a.channel_type === channelType);
+  const channelAccounts = (accounts.data ?? []).filter(
+    (a) => galleryType(a.channel_type) === channelType,
+  );
   const selectedTemplate = (templates.data ?? []).find((tp) => tp.id === templateId);
   const variables = templateVariables(selectedTemplate);
 
@@ -168,7 +171,11 @@ export function BroadcastWizard({ open, onClose }: { open: boolean; onClose: () 
       const body: BroadcastCreateBody = {
         name: name.trim(),
         type: scheduleMode === "recurring" ? "recurring" : "one_time",
-        channel_type: channelType,
+        // the backend validates channel_type against the ACCOUNT's stored
+        // canonical type (whatsapp_cloud/whatsapp_bsp) — send that, not the
+        // gallery family name
+        channel_type:
+          (accounts.data ?? []).find((a) => a.id === accountId)?.channel_type ?? channelType,
         channel_account_id: accountId,
         segment_id: segmentId,
         template_id: templateId,

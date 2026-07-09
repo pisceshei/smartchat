@@ -35,9 +35,23 @@ export const CHANNEL_CATALOG: ChannelMeta[] = [
   { type: "vk", name: "VKontakte", descKey: "int.channel.desc.vk", connectable: true, glyph: "VK" },
 ];
 
-export const CHANNEL_NAME: Record<string, string> = Object.fromEntries(
-  CHANNEL_CATALOG.map((c) => [c.type, c.name]),
-);
+export const CHANNEL_NAME: Record<string, string> = {
+  ...Object.fromEntries(CHANNEL_CATALOG.map((c) => [c.type, c.name])),
+  // backend canonical WhatsApp types resolve to the gallery card name so
+  // BroadcastsPage / ChannelsReport / ReportFilterBar labels never show the
+  // raw "whatsapp_cloud"/"whatsapp_bsp" string
+  whatsapp_cloud: "WhatsApp API",
+  whatsapp_bsp: "WhatsApp API",
+};
+
+/** Backend canonical channel_type → gallery card type. whatsapp_cloud (direct
+ *  Meta) and whatsapp_bsp (YCloud proxy) both live under the WhatsApp API
+ *  card — connected accounts must surface there, and the WABA selectors /
+ *  broadcast tiles must match on the family, not the raw stored type. */
+export function galleryType(backendType: string): ChannelType {
+  if (backendType === "whatsapp_cloud" || backendType === "whatsapp_bsp") return "whatsapp_api";
+  return backendType as ChannelType;
+}
 
 /** Translate-target language options for the inbox translate toggle. */
 export const TRANSLATE_LANGS: { value: string; label: string }[] = [

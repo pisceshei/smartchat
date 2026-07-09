@@ -39,7 +39,7 @@ import { channelsApi, splitLinksApi } from "@/api/endpoints";
 import type { SplitLink, SplitLinkTarget, SplitStrategy } from "@/api/types";
 import { ChannelIcon } from "@/components/ChannelIcon";
 import { EmptyState } from "@/components/EmptyState";
-import { CHANNEL_NAME } from "@/constants/channels";
+import { CHANNEL_NAME, galleryType } from "@/constants/channels";
 import { t } from "@/i18n";
 import "./marketing.css";
 
@@ -199,7 +199,9 @@ function SplitLinkForm({ open, onClose }: { open: boolean; onClose: () => void }
   const [prefill, setPrefill] = useState("");
 
   const accounts = useQuery({ queryKey: ["channel-accounts"], queryFn: () => channelsApi.listAccounts(), enabled: open, retry: 1 });
-  const channelAccounts = (accounts.data ?? []).filter((a) => a.channel_type === channelType);
+  const channelAccounts = (accounts.data ?? []).filter(
+    (a) => galleryType(a.channel_type) === channelType,
+  );
 
   const create = useMutation({
     mutationFn: () => {

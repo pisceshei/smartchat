@@ -50,6 +50,7 @@ from ..base import (
     DeliveryStatus,
     HealthResult,
     InboundEvent,
+    MediaFetched,
     MediaRef,
     MessageIn,
     ProfileHint,
@@ -171,15 +172,21 @@ class WhatsAppBspAdapter(WhatsAppCloudAdapter):
                     mime=obj.get("mime_type"),
                 )
             )
-            link = obj.get("link")
-            ref: dict[str, Any] = (
-                {"kind": "url", "url": link, "filename": obj.get("filename"),
-                 "mime": obj.get("mime_type")}
-                if link
-                else {"kind": "ycloud_media", "media_id": obj.get("id"),
-                      "mime": obj.get("mime_type"), "filename": obj.get("filename")}
+            # ALWAYS a ycloud_media ref: YCloud media links point at
+            # api.ycloud.com and require the X-API-Key header — the base
+            # header-less url fetch would 401. fetch_media (below) handles it.
+            media_refs.append(
+                MediaRef(
+                    block_index=len(blocks) - 1,
+                    ref={
+                        "kind": "ycloud_media",
+                        "url": obj.get("link"),
+                        "media_id": obj.get("id"),
+                        "mime": obj.get("mime_type"),
+                        "filename": obj.get("filename"),
+                    },
+                )
             )
-            media_refs.append(MediaRef(block_index=len(blocks) - 1, ref=ref))
         elif mtype == "interactive":
             i = m.get("interactive") or {}
             reply = i.get("button_reply") or i.get("list_reply") or {}
@@ -324,6 +331,34 @@ class WhatsAppBspAdapter(WhatsAppCloudAdapter):
         # inherited Cloud implementation so we never hit graph.facebook.com.
         return None
 
+    async def fetch_media(
+        self, account: Any, credentials: dict[str, Any], ref: dict[str, Any]
+    ) -> MediaFetched | None:
+        """YCloud inbound media: the ``link`` points at api.ycloud.com and
+        requires the API key header (the base header-less GET would 401).
+        Falls back to a bare GET on 401/403 in case the link is a public CDN
+        URL, and to the media-download endpoint when only ``media_id`` came."""
+        if ref.get("kind") != "ycloud_media":
+            return await super().fetch_media(account, credentials, ref)
+        url = ref.get("url") or (
+            f"{YCLOUD_BASE}/whatsapp/medias/{ref.get('media_id')}" if ref.get("media_id") else None
+        )
+        if not url:
+            return None
+        headers = {"X-API-Key": str(credentials.get("api_key") or "")}
+        try:
+            r = await self.http.get(url, headers=headers, follow_redirects=True)
+            if r.status_code in (401, 403) and ref.get("url"):
+                r = await self.http.get(url, follow_redirects=True)
+            r.raise_for_status()
+            return MediaFetched(
+                data=r.content,
+                mime=r.headers.get("content-type") or ref.get("mime"),
+                filename=ref.get("filename"),
+            )
+        except httpx.HTTPError:
+            return None
+
     # -- connect / health --------------------------------------------------
     async def connect_validate(
         self, config: dict[str, Any], credentials: dict[str, Any]
@@ -338,37 +373,108 @@ class WhatsAppBspAdapter(WhatsAppCloudAdapter):
             return await self._ycloud_connect(config, api_key)
         return self._stub_connect(bsp)
 
-    async def _ycloud_connect(self, config: dict[str, Any], api_key: str) -> ConnectResult:
-        try:
-            r = await self.http.get(
-                f"{YCLOUD_BASE}/whatsapp/phoneNumbers",
-                params={"limit": 100},
-                headers={"X-API-Key": api_key},
-            )
-        except httpx.HTTPError as e:
-            return self._connect_error(str(e)[:300])
+    async def list_phone_numbers(self, api_key: str) -> list[dict[str, Any]]:
+        """GET /whatsapp/phoneNumbers → normalized picker items (shared by
+        connect_validate and the admin preview endpoint). Raises ValueError
+        with a user-safe message on auth errors; httpx errors propagate."""
+        r = await self.http.get(
+            f"{YCLOUD_BASE}/whatsapp/phoneNumbers",
+            params={"limit": 100},
+            headers={"X-API-Key": api_key},
+        )
         try:
             data = r.json()
         except ValueError:
             data = {}
+        if r.status_code in (401, 403):
+            raise ValueError("invalid API key")
         if r.status_code >= 400:
-            status = "token_expired" if r.status_code in (401, 403) else "error"
-            return self._connect_error(_err_message(data, r.text)[:300], status=status)
-        items = data.get("items") or []
+            raise ValueError(_err_message(data, r.text)[:300])
+        return [
+            {
+                "id": it.get("id"),
+                "phone_number": it.get("phoneNumber"),
+                "display_phone_number": it.get("displayPhoneNumber"),
+                "verified_name": it.get("verifiedName"),
+                "waba_id": it.get("wabaId"),
+                "quality_rating": it.get("qualityRating"),
+                "messaging_limit": it.get("messagingLimit"),
+                "status": it.get("status"),
+            }
+            for it in (data.get("items") or [])
+        ]
+
+    # YCloud webhook events the platform consumes (inbound + delivery status
+    # via ingress, template review applied directly by the hook route).
+    YC_WEBHOOK_EVENTS: ClassVar[tuple[str, ...]] = (
+        "whatsapp.inbound_message.received",
+        "whatsapp.message.updated",
+        "whatsapp.template.reviewed",
+    )
+
+    async def _ycloud_register_webhook(
+        self, api_key: str, hook_url: str
+    ) -> tuple[str, dict[str, Any]]:
+        """Idempotently ensure a YCloud webhook endpoint for hook_url.
+
+        Returns (state, credentials_patch): state ∈ registered (fresh create,
+        secret captured) / existing (endpoint already there — its secret is
+        not recoverable via the API; the router copies it from a sibling
+        account or the operator pastes it manually) / manual (registration
+        failed — operator sets it up in the YCloud console). Never raises:
+        webhook setup must not fail the connect."""
+        try:
+            lr = await self.http.get(
+                f"{YCLOUD_BASE}/webhookEndpoints",
+                params={"limit": 100},
+                headers={"X-API-Key": api_key},
+            )
+            if lr.status_code < 400:
+                items = lr.json().get("items") or []
+                if any(str(e.get("url") or "") == hook_url for e in items if isinstance(e, dict)):
+                    return "existing", {}
+            cr = await self.http.post(
+                f"{YCLOUD_BASE}/webhookEndpoints",
+                json={"url": hook_url, "enabledEvents": list(self.YC_WEBHOOK_EVENTS)},
+                headers={"X-API-Key": api_key},
+            )
+            if cr.status_code < 400:
+                secret = str((cr.json() or {}).get("secret") or "")
+                if secret:
+                    return "registered", {"webhook_secret": secret}
+        except (httpx.HTTPError, ValueError):
+            pass
+        return "manual", {}
+
+    async def _ycloud_connect(self, config: dict[str, Any], api_key: str) -> ConnectResult:
+        try:
+            items = await self.list_phone_numbers(api_key)
+        except ValueError as e:
+            status = "token_expired" if "API key" in str(e) else "error"
+            return self._connect_error(str(e), status=status)
+        except httpx.HTTPError as e:
+            return self._connect_error(str(e)[:300])
         if not items:
             return self._connect_error("no WhatsApp phone numbers on this BSP account")
         want = str(config.get("phone_number") or config.get("external_id") or "").strip()
         chosen = None
         if want:
             for it in items:
-                if str(it.get("phoneNumber")) == want or str(it.get("id")) == want:
+                if str(it.get("phone_number")) == want or str(it.get("id")) == want:
                     chosen = it
                     break
         chosen = chosen or items[0]
-        external_id = str(chosen.get("phoneNumber") or chosen.get("id") or "").strip()
+        external_id = str(chosen.get("phone_number") or chosen.get("id") or "").strip()
         if not external_id:
             return self._connect_error("could not resolve a phone number from the BSP account")
-        name = str(chosen.get("verifiedName") or chosen.get("displayName") or "")
+        name = str(chosen.get("verified_name") or "")
+
+        # auto-register the deployment-level webhook endpoint (best effort)
+        from ...settings import get_settings  # local: keep adapter import cheap
+
+        hook_url = f"{get_settings().public_base_url}/hooks/ycloud"
+        webhook_state, credentials_patch = await self._ycloud_register_webhook(api_key, hook_url)
+
         return ConnectResult(
             external_id=external_id,
             name=name,
@@ -377,12 +483,17 @@ class WhatsAppBspAdapter(WhatsAppCloudAdapter):
                 status="active",
                 detail={
                     "bsp": "ycloud",
-                    "waba_id": chosen.get("wabaId"),
-                    "quality": chosen.get("qualityRating"),
+                    "waba_id": chosen.get("waba_id"),
+                    "quality": chosen.get("quality_rating"),
+                    "messaging_limit": chosen.get("messaging_limit"),
+                    "verified_name": chosen.get("verified_name"),
                     "numbers": len(items),
+                    "webhook": webhook_state,
+                    "webhook_url": hook_url,
                 },
             ),
-            config_patch={"bsp": "ycloud", "waba_id": chosen.get("wabaId")},
+            config_patch={"bsp": "ycloud", "waba_id": chosen.get("waba_id")},
+            credentials_patch=credentials_patch,
             needs_webhook_secret=False,  # YCloud webhook is BSP-app level, no path secret
         )
 
@@ -405,15 +516,23 @@ class WhatsAppBspAdapter(WhatsAppCloudAdapter):
             return HealthResult(ok=False, status="error", detail={"error": f"BSP '{bsp}' not implemented"})
         api_key = credentials.get("api_key", "")
         try:
-            r = await self.http.get(
-                f"{YCLOUD_BASE}/whatsapp/phoneNumbers",
-                params={"limit": 1},
-                headers={"X-API-Key": api_key},
-            )
-            data = r.json()
-        except (httpx.HTTPError, ValueError) as e:
+            numbers = await self.list_phone_numbers(api_key)
+        except ValueError as e:
+            status = "token_expired" if "API key" in str(e) else "error"
+            return HealthResult(ok=False, status=status, detail={"error": str(e)[:200]})
+        except httpx.HTTPError as e:
             return HealthResult(ok=False, status="error", detail={"error": str(e)[:300]})
-        if r.status_code < 400:
-            return HealthResult(ok=True, status="active", detail={"bsp": "ycloud"})
-        status = "token_expired" if r.status_code in (401, 403) else "error"
-        return HealthResult(ok=False, status=status, detail={"error": _err_message(data, r.text)[:200]})
+        detail: dict[str, Any] = {"bsp": "ycloud", "numbers": len(numbers)}
+        mine = next(
+            (n for n in numbers if str(n.get("phone_number")) == str(account.external_id)), None
+        )
+        if mine is not None:
+            detail.update(
+                {
+                    "verified_name": mine.get("verified_name"),
+                    "quality": mine.get("quality_rating"),
+                    "messaging_limit": mine.get("messaging_limit"),
+                    "number_status": mine.get("status"),
+                }
+            )
+        return HealthResult(ok=True, status="active", detail=detail)

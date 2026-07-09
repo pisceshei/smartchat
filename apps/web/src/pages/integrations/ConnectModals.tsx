@@ -16,7 +16,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { channelsApi, devicesApi, widgetsApi } from "@/api/endpoints";
-import type { BridgeDeviceStatus, ChannelType } from "@/api/types";
+import type { BridgeDeviceStatus, BspNumber, ChannelType } from "@/api/types";
 import { t } from "@/i18n";
 
 function useConnect(channelType: ChannelType, onDone: () => void) {
@@ -367,9 +367,59 @@ export function EmailConnectModal({ open, onClose }: ModalProps) {
 
 export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
   const [form] = Form.useForm();
-  const connect = useConnect("whatsapp_api", onClose);
+  const { message, modal } = App.useApp();
+  const qc = useQueryClient();
   const bsp = (Form.useWatch("bsp", form) as string) ?? "cloud";
   const isCloud = bsp === "cloud";
+  const [numbers, setNumbers] = useState<BspNumber[] | null>(null);
+  const [loadingNums, setLoadingNums] = useState(false);
+
+  const connect = useMutation({
+    mutationFn: (body: Record<string, unknown>) => channelsApi.connect("whatsapp_api", body),
+    onSuccess: (res) => {
+      message.success(t("common.createSuccess"));
+      void qc.invalidateQueries({ queryKey: ["channel-accounts"] });
+      onClose();
+      if (res.webhook_manual && res.webhook_url) {
+        // auto-registration didn't yield a secret — the operator finishes in
+        // the YCloud console (Developers → Webhook) and may re-connect with
+        // the endpoint secret to enforce signature verification
+        modal.info({
+          title: t("int.wa.webhookManualTitle"),
+          content: (
+            <div>
+              <p>{t("int.wa.webhookManualHint")}</p>
+              <Input readOnly value={res.webhook_url} onFocus={(e) => e.target.select()} />
+            </div>
+          ),
+        });
+      }
+    },
+    onError: (e) =>
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed")),
+  });
+
+  const loadNumbers = async () => {
+    try {
+      await form.validateFields(["api_key"]);
+    } catch {
+      return;
+    }
+    setLoadingNums(true);
+    try {
+      setNumbers(
+        await channelsApi.previewBspNumbers({
+          api_key: String(form.getFieldValue("api_key") ?? ""),
+          bsp,
+        }),
+      );
+    } catch (e) {
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed"));
+    } finally {
+      setLoadingNums(false);
+    }
+  };
+
   return (
     <ConnectModalShell
       title="WhatsApp Business Cloud API"
@@ -383,7 +433,14 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
         layout="vertical"
         autoComplete="off"
         initialValues={{ bsp: "cloud" }}
-        onFinish={(v) => connect.mutate(v)}
+        onFinish={(v) => {
+          if (!isCloud) {
+            const chosen = (numbers ?? []).find((n) => n.phone_number === v.phone_number);
+            connect.mutate({ ...v, waba_id: chosen?.waba_id ?? undefined });
+          } else {
+            connect.mutate(v);
+          }
+        }}
       >
         <Form.Item name="name" label={t("int.name")}>
           <Input autoComplete="off" maxLength={30} />
@@ -399,11 +456,11 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
             ]}
           />
         </Form.Item>
-        <Form.Item name="phone_number_id" label={t("int.wa.phoneNumberId")} rules={REQUIRED}>
-          <Input autoComplete="off" />
-        </Form.Item>
         {isCloud ? (
           <>
+            <Form.Item name="phone_number_id" label={t("int.wa.phoneNumberId")} rules={REQUIRED} preserve={false}>
+              <Input autoComplete="off" />
+            </Form.Item>
             <Form.Item name="waba_id" label={t("int.wa.wabaId")} rules={REQUIRED} preserve={false}>
               <Input autoComplete="off" />
             </Form.Item>
@@ -421,6 +478,35 @@ export function WhatsAppApiConnectModal({ open, onClose }: ModalProps) {
               style={{ marginBottom: 16 }}
             />
             <Form.Item name="api_key" label={t("int.wa.apiKey")} rules={REQUIRED} preserve={false}>
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+            <Button
+              block
+              loading={loadingNums}
+              onClick={() => void loadNumbers()}
+              style={{ marginBottom: 16 }}
+            >
+              {t("int.wa.loadNumbers")}
+            </Button>
+            {numbers && (
+              <Form.Item name="phone_number" label={t("int.wa.phoneNumber")} rules={REQUIRED} preserve={false}>
+                <Select
+                  placeholder={numbers.length ? undefined : t("int.wa.noNumbers")}
+                  options={numbers.map((n) => ({
+                    value: n.phone_number,
+                    label: `${n.display_phone_number ?? n.phone_number}${
+                      n.verified_name ? ` · ${n.verified_name}` : ""
+                    }${n.quality_rating ? ` (${n.quality_rating})` : ""}`,
+                  }))}
+                />
+              </Form.Item>
+            )}
+            <Form.Item
+              name="webhook_secret"
+              label={t("int.wa.webhookSecret")}
+              tooltip={t("int.wa.webhookSecretHint")}
+              preserve={false}
+            >
               <Input.Password autoComplete="new-password" />
             </Form.Item>
           </>

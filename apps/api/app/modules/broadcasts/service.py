@@ -22,7 +22,7 @@ from ...services import timers
 
 # msg_templates.channel → the channel_types that can send it
 TEMPLATE_CHANNEL_MAP = {
-    "whatsapp": {"whatsapp_cloud"},
+    "whatsapp": {"whatsapp_cloud", "whatsapp_bsp"},
     "email": {"email"},
     "messenger": {"messenger"},
     "sms": {"sms"},
@@ -65,8 +65,24 @@ async def _validate_refs(
             raise BroadcastError(
                 f"template channel {tpl.channel} cannot send on {channel_type}", "template_channel"
             )
-        if tpl.channel == "whatsapp" and tpl.approval_status not in ("approved",):
-            raise BroadcastError("whatsapp template is not approved", "template_unapproved")
+        if tpl.channel == "whatsapp":
+            if tpl.approval_status not in ("approved",):
+                raise BroadcastError("whatsapp template is not approved", "template_unapproved")
+            # WhatsApp templates are approved PER WABA — a template bound to
+            # one account/WABA does not exist on another. Require the selected
+            # account to be the template's own account (or share its WABA).
+            if tpl.waba_account_id and channel_account_id is not None:
+                sel = await session.get(ChannelAccount, channel_account_id)
+                sel_ids = {str(channel_account_id)}
+                if sel is not None:
+                    wid = (sel.config or {}).get("waba_id")
+                    if wid:
+                        sel_ids.add(str(wid))
+                if str(tpl.waba_account_id) not in sel_ids:
+                    raise BroadcastError(
+                        "this template belongs to a different WhatsApp account",
+                        "template_wrong_account",
+                    )
 
 
 def derive_status(bc_type: str, schedule: dict[str, Any], *, now: datetime) -> str:

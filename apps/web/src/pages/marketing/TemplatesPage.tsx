@@ -19,11 +19,14 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import { channelsApi, msgTemplatesApi } from "@/api/endpoints";
+import { galleryType } from "@/constants/channels";
 import type {
   EmailTemplate,
   MessengerTemplate,
@@ -112,19 +115,40 @@ function WhatsAppTab() {
     queryFn: () => channelsApi.listAccounts(),
     retry: 1,
   });
-  const wabaAccounts = (accounts.data ?? []).filter((a) => a.channel_type === "whatsapp_api");
+  // whatsapp_cloud (direct Meta) AND whatsapp_bsp (YCloud proxy) both count
+  // as WABA-backed accounts — the stored channel_type is backend-canonical
+  const wabaAccounts = (accounts.data ?? []).filter(
+    (a) => galleryType(a.channel_type) === "whatsapp_api",
+  );
 
   const sync = useMutation({
-    mutationFn: () => {
-      const acc = wabaAccounts[0];
-      if (!acc) throw new Error("no-account");
-      return msgTemplatesApi.syncWhatsapp(acc.id);
+    mutationFn: async () => {
+      if (!wabaAccounts.length) throw new Error("no-account");
+      const results = await Promise.allSettled(
+        wabaAccounts.map((a) => msgTemplatesApi.syncWhatsapp(a.id)),
+      );
+      const synced = results.reduce(
+        (n, r) => n + (r.status === "fulfilled" ? r.value.synced : 0),
+        0,
+      );
+      if (results.every((r) => r.status === "rejected")) throw new Error("all-failed");
+      return { synced };
     },
     onSuccess: (r) => {
       message.success(t("tpl.synced", { count: r.synced }));
       void qc.invalidateQueries({ queryKey: ["msg-templates", "whatsapp"] });
     },
     onError: () => message.error(t("tpl.syncFailed")),
+  });
+
+  const submit = useMutation({
+    mutationFn: (id: string) => msgTemplatesApi.submitWhatsapp(id),
+    onSuccess: () => {
+      message.success(t("tpl.submitted"));
+      void qc.invalidateQueries({ queryKey: ["msg-templates", "whatsapp"] });
+    },
+    onError: (e) =>
+      message.error(e instanceof ApiError && e.message ? e.message : t("common.operationFailed")),
   });
 
   const remove = useMutation({
@@ -168,14 +192,39 @@ function WhatsAppTab() {
       title: t("tpl.col.status"),
       dataIndex: "approval_status",
       width: 90,
-      render: (s: WaApprovalStatus) => approvalTag(s),
+      render: (s: WaApprovalStatus, r) =>
+        s === "rejected" && r.rejected_reason ? (
+          <Tooltip title={r.rejected_reason}>{approvalTag(s)}</Tooltip>
+        ) : (
+          approvalTag(s)
+        ),
     },
     {
       title: t("common.actions"),
-      width: 70,
-      render: (_, r) => (
-        <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => remove.mutate(r.id)} />
-      ),
+      width: 140,
+      render: (_, r) => {
+        // submit-for-review only works on BSP (YCloud) accounts — Cloud API
+        // templates are created in Meta Business Manager (backend 422s them)
+        const acct = (accounts.data ?? []).find((a) => a.id === r.waba_account_id);
+        const canSubmit =
+          acct?.channel_type === "whatsapp_bsp" &&
+          (r.approval_status === "draft" || r.approval_status === "rejected");
+        return (
+          <>
+            {canSubmit && (
+              <Button
+                type="link"
+                size="small"
+                loading={submit.isPending && submit.variables === r.id}
+                onClick={() => submit.mutate(r.id)}
+              >
+                {t("tpl.submit")}
+              </Button>
+            )}
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => remove.mutate(r.id)} />
+          </>
+        );
+      },
     },
   ];
 

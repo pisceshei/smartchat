@@ -7,6 +7,10 @@ export type ChannelType =
   | "widget"
   | "whatsapp_app"
   | "whatsapp_api"
+  // backend canonical WhatsApp API transports (gallery card = whatsapp_api;
+  // use galleryType() to map). ChannelAccount.channel_type carries these.
+  | "whatsapp_cloud"
+  | "whatsapp_bsp"
   | "messenger"
   | "instagram"
   | "telegram_app"
@@ -35,6 +39,18 @@ export interface ChannelAccount {
   status: ChannelAccountStatus;
   config: Record<string, unknown>;
   created_at: string;
+}
+
+/** One WhatsApp number on a BSP (YCloud) account — the connect modal picker. */
+export interface BspNumber {
+  id: string | null;
+  phone_number: string;
+  display_phone_number: string | null;
+  verified_name: string | null;
+  waba_id: string | null;
+  quality_rating: string | null;
+  messaging_limit: string | null;
+  status: string | null;
 }
 
 /* --------------------------------------------- whatsapp/line app (QR bridge)
@@ -979,6 +995,8 @@ export interface WhatsAppTemplate {
   footer?: { text: string } | null;
   buttons?: WaTemplateButtons | null;
   approval_status: WaApprovalStatus;
+  meta_template_id?: string | null;
+  rejected_reason?: string | null;
   created_at: string;
 }
 

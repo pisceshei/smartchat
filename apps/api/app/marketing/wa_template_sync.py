@@ -80,24 +80,48 @@ async def sync_account_templates(
     *,
     account: ChannelAccount,
     http: httpx.AsyncClient | None = None,
+    import_missing: bool = False,
 ) -> int:
-    """Reconcile one WhatsApp account's local templates against Meta. Matches by
-    ``meta_template_id`` first, then (name, language). Returns rows updated."""
+    """Reconcile one WhatsApp account's local templates against the provider
+    (Meta Graph for whatsapp_cloud, YCloud for whatsapp_bsp). Matches by
+    ``meta_template_id`` first, then (name, language). ``import_missing``
+    additionally creates local rows for remote templates we don't have (used
+    for BSP accounts whose templates were built in the provider console).
+    Returns rows updated/created."""
+    from . import ycloud_templates  # local import: avoid cycle at module load
+
     creds = await get_credentials(session, account)
-    token = creds.get("access_token", "")
-    waba_id = _waba_id_for(account)
-    if not token or not waba_id:
-        return 0
-    client = http or httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
-    close = http is None
-    try:
-        remote = await fetch_meta_templates(client, waba_id=waba_id, token=token)
-    finally:
-        if close:
-            await client.aclose()
+    if account.channel_type == "whatsapp_bsp":
+        api_key = creds.get("api_key", "")
+        # BSP external_id is a phone number — NEVER a valid waba fallback
+        waba_id = (account.config or {}).get("waba_id") or ""
+        if not api_key or not waba_id:
+            log.warning("wa template sync skipped account=%s (missing api_key/waba_id)", account.id)
+            return 0
+        raw = await ycloud_templates.fetch_ycloud_templates(
+            http, waba_id=str(waba_id), api_key=api_key
+        )
+        remote = [ycloud_templates.normalize_remote(t) for t in raw]
+    else:
+        token = creds.get("access_token", "")
+        waba_id = _waba_id_for(account)
+        if not token or not waba_id:
+            return 0
+        client = http or httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
+        close = http is None
+        try:
+            remote = await fetch_meta_templates(client, waba_id=waba_id, token=token)
+        finally:
+            if close:
+                await client.aclose()
     by_id = {str(t.get("id")): t for t in remote if t.get("id")}
     by_key = {(str(t.get("name")), str(t.get("language"))): t for t in remote}
 
+    # This WABA's own id-set (an account UUID for our rows; the raw waba id
+    # for legacy rows). A template belongs to THIS account when its
+    # waba_account_id is one of these OR unset — never touch a sibling
+    # account's templates that merely share a (name, language).
+    account_ids = {str(account.id), str(waba_id)}
     locals_ = (
         await session.execute(
             select(MsgTemplate).where(
@@ -106,12 +130,13 @@ async def sync_account_templates(
             )
         )
     ).scalars().all()
+    mine = [t for t in locals_ if not t.waba_account_id or str(t.waba_account_id) in account_ids]
     updated = 0
-    for tpl in locals_:
+    for tpl in mine:
         meta = None
         if tpl.meta_template_id and tpl.meta_template_id in by_id:
             meta = by_id[tpl.meta_template_id]
-        elif (tpl.name, tpl.language) in by_key:
+        elif (tpl.name, str(tpl.language)) in by_key:
             meta = by_key[(tpl.name, str(tpl.language))]
         if meta is None:
             continue
@@ -123,11 +148,55 @@ async def sync_account_templates(
         if meta.get("id") and tpl.meta_template_id != str(meta["id"]):
             tpl.meta_template_id = str(meta["id"])
             changed = True
+        # bind an unlinked row to this account so future syncs stay scoped
+        if not tpl.waba_account_id:
+            tpl.waba_account_id = str(account.id)
+            changed = True
         reason = meta.get("rejected_reason")
         if new_status == "rejected" and reason and tpl.rejected_reason != reason:
             tpl.rejected_reason = str(reason)
             changed = True
         if changed:
+            updated += 1
+
+    if import_missing:
+        # dedupe against THIS account's rows only (a sibling account may
+        # legitimately hold a same-named template on its own WABA)
+        seen = {(t.name, str(t.language or "")) for t in mine}
+        for t in remote:
+            name = str(t.get("name") or "")
+            key = (name, str(t.get("language") or ""))
+            if not name or key in seen:
+                continue
+            components = t.get("components") or []
+            if not ycloud_templates.components_representable(components):
+                # media-header / OTP / unmapped-button templates can't be
+                # losslessly stored in our body schema — importing them as
+                # "approved" would make every send fail. Skip + log instead.
+                log.warning(
+                    "wa sync: skipping unrepresentable remote template %s/%s (account=%s)",
+                    name, key[1], account.id,
+                )
+                continue
+            session.add(
+                MsgTemplate(
+                    workspace_id=account.workspace_id,
+                    channel="whatsapp",
+                    name=name,
+                    language=key[1] or None,
+                    category=(str(t.get("category") or "").lower() or None),
+                    waba_account_id=str(account.id),
+                    body=ycloud_templates.components_to_body(components),
+                    approval_status=map_meta_status(t.get("status")),
+                    meta_template_id=str(t["id"]) if t.get("id") else None,
+                    rejected_reason=(
+                        str(t.get("rejected_reason"))
+                        if map_meta_status(t.get("status")) == "rejected" and t.get("rejected_reason")
+                        else None
+                    ),
+                )
+            )
+            seen.add(key)
             updated += 1
     return updated
 
@@ -139,7 +208,7 @@ async def sync_workspace(
         await session.execute(
             select(ChannelAccount).where(
                 ChannelAccount.workspace_id == workspace_id,
-                ChannelAccount.channel_type == "whatsapp_cloud",
+                ChannelAccount.channel_type.in_(("whatsapp_cloud", "whatsapp_bsp")),
                 ChannelAccount.enabled.is_(True),
             )
         )
@@ -160,7 +229,7 @@ async def reconcile_all(session_factory: async_sessionmaker[AsyncSession]) -> in
         ids = (
             await session.execute(
                 select(ChannelAccount.id).where(
-                    ChannelAccount.channel_type == "whatsapp_cloud",
+                    ChannelAccount.channel_type.in_(("whatsapp_cloud", "whatsapp_bsp")),
                     ChannelAccount.enabled.is_(True),
                 )
             )

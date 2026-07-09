@@ -29,6 +29,7 @@ import type {
   AuditEntry,
   AuthResponse,
   BridgeDeviceStatus,
+  BspNumber,
   ChannelAccount,
   ChannelIdentity,
   ChannelType,
@@ -106,6 +107,7 @@ import type {
   SubscriptionAddons,
   SummaryReport,
   TemplateChannel,
+  WhatsAppTemplate,
 } from "./types";
 
 /* ---------------------------------------------------------------- auth */
@@ -418,8 +420,15 @@ export const customFieldsApi = {
 export const channelsApi = {
   listAccounts: () => http<ChannelAccount[]>("GET", "/channels/accounts"),
   connect: (channelType: ChannelType, body: Record<string, unknown>) =>
-    http<ChannelAccount>("POST", `/channels/${channelType}/accounts`, { body }),
+    http<ChannelAccount & { webhook_manual?: boolean; webhook_url?: string }>(
+      "POST",
+      `/channels/${channelType}/accounts`,
+      { body },
+    ),
   removeAccount: (id: string) => http<void>("DELETE", `/channels/accounts/${id}`),
+  /** List a BSP account's WhatsApp numbers for the connect modal picker. */
+  previewBspNumbers: (body: { api_key: string; bsp?: string }) =>
+    http<BspNumber[]>("POST", "/channels/whatsapp_bsp/preview-numbers", { body }),
 };
 
 /* ------------------------------------------- whatsapp/line app (QR bridge) */
@@ -866,6 +875,11 @@ export const msgTemplatesApi = {
   syncWhatsapp: (channelAccountId: string) =>
     http<{ synced: number }>("POST", "/msg-templates/whatsapp/sync", {
       body: { channel_account_id: channelAccountId },
+    }),
+  /** Submit a locally-built WhatsApp template for Meta review (BSP accounts). */
+  submitWhatsapp: (templateId: string) =>
+    http<WhatsAppTemplate>("POST", `/msg-templates/whatsapp/${templateId}/submit`, {
+      body: {},
     }),
   /* SMS signatures */
   signatures: () => http<SmsSignature[]>("GET", "/msg-templates/sms/signatures"),

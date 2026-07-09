@@ -15,9 +15,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...channels.creds import get_credentials
 from ...db import get_session
 from ...deps import MemberContext, require_permission
-from ...marketing import wa_template_sync
+from ...marketing import wa_template_sync, ycloud_templates
 from ...models.channels import ChannelAccount
 from ...models.marketing import MsgTemplate, SmsSignature
 from . import service as svc
@@ -44,6 +45,13 @@ class TemplateOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     segmentation: dict[str, Any] | None = None
+    # whatsapp templates lift their structural sub-fields to the top level so
+    # the SPA reads label/header/footer/buttons directly (body then carries
+    # only {text}); other channels leave these None and keep the full body.
+    label: str | None = None
+    header: dict[str, Any] | None = None
+    footer: dict[str, Any] | None = None
+    buttons: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -69,14 +77,25 @@ class SyncIn(BaseModel):
 
 def _out(tpl: MsgTemplate) -> TemplateOut:
     seg = None
+    body = tpl.body or {}
+    label = header = footer = buttons = None
     if tpl.channel == "sms":
-        seg = svc.sms_segments(str((tpl.body or {}).get("text") or "")).as_dict()
+        seg = svc.sms_segments(str(body.get("text") or "")).as_dict()
+    elif tpl.channel == "whatsapp":
+        # stored body = {label, header, body:{text}, footer, buttons}; the SPA
+        # reads these at the top level and body as {text}
+        label = body.get("label")
+        header = body.get("header")
+        footer = body.get("footer")
+        buttons = body.get("buttons")
+        body = {"text": (body.get("body") or {}).get("text", "")}
     return TemplateOut(
-        id=tpl.id, channel=tpl.channel, folder=tpl.folder, name=tpl.name, body=tpl.body or {},
+        id=tpl.id, channel=tpl.channel, folder=tpl.folder, name=tpl.name, body=body,
         language=tpl.language, category=tpl.category, waba_account_id=tpl.waba_account_id,
         approval_status=tpl.approval_status, meta_template_id=tpl.meta_template_id,
         rejected_reason=tpl.rejected_reason, usage_count=tpl.usage_count,
         created_at=tpl.created_at, updated_at=tpl.updated_at, segmentation=seg,
+        label=label, header=header, footer=footer, buttons=buttons,
     )
 
 
@@ -126,11 +145,104 @@ async def sync_whatsapp(
     acct = await session.get(ChannelAccount, body.channel_account_id)
     if acct is None or acct.workspace_id != member.workspace_id:
         raise HTTPException(404, detail="channel account not found")
-    if acct.channel_type != "whatsapp_cloud":
+    if acct.channel_type not in ("whatsapp_cloud", "whatsapp_bsp"):
         raise HTTPException(422, detail="not a whatsapp account")
-    synced = await wa_template_sync.sync_account_templates(session, account=acct)
+    synced = await wa_template_sync.sync_account_templates(
+        session,
+        account=acct,
+        # BSP consoles are where templates get built pre-integration — pull
+        # them in so the local library reflects the WABA on first sync
+        import_missing=(acct.channel_type == "whatsapp_bsp"),
+    )
     await session.commit()
     return {"synced": synced}
+
+
+class SubmitIn(BaseModel):
+    channel_account_id: uuid.UUID | None = None
+
+
+@router.post("/whatsapp/{template_id}/submit", response_model=TemplateOut)
+async def submit_whatsapp(
+    template_id: uuid.UUID,
+    body: SubmitIn = Body(default=SubmitIn()),
+    member: MemberContext = Depends(require_permission("broadcasts.manage")),
+    session: AsyncSession = Depends(get_session),
+) -> TemplateOut:
+    """Submit a locally-built WhatsApp template to the provider for Meta review
+    (BSP/YCloud accounts only — Cloud API templates are created in Meta
+    Business Manager). A name+language conflict ADOPTS the existing remote
+    template (links its status/id) instead of erroring."""
+    tpl = await _get(session, member.workspace_id, "whatsapp", template_id)
+    acct: ChannelAccount | None = None
+    acct_id: uuid.UUID | None = body.channel_account_id
+    if acct_id is None and tpl.waba_account_id:
+        try:
+            acct_id = uuid.UUID(str(tpl.waba_account_id))
+        except ValueError:
+            # legacy rows stored the raw WABA id string, not an account UUID —
+            # resolve the account whose config.waba_id matches
+            acct = (
+                await session.execute(
+                    select(ChannelAccount).where(
+                        ChannelAccount.workspace_id == member.workspace_id,
+                        ChannelAccount.channel_type == "whatsapp_bsp",
+                        ChannelAccount.config["waba_id"].astext == str(tpl.waba_account_id),
+                    )
+                )
+            ).scalars().first()
+    if acct is None and acct_id is None:
+        raise HTTPException(422, detail="template has no linked channel account")
+    if acct is None:
+        acct = await session.get(ChannelAccount, acct_id)
+    if acct is None or acct.workspace_id != member.workspace_id:
+        raise HTTPException(404, detail="channel account not found")
+    if acct.channel_type != "whatsapp_bsp":
+        raise HTTPException(
+            422,
+            detail="submit-for-review is only supported on BSP (YCloud) accounts; "
+            "Cloud API templates are created in Meta Business Manager",
+        )
+    creds = await get_credentials(session, acct)
+    api_key = str(creds.get("api_key") or "")
+    waba_id = str((acct.config or {}).get("waba_id") or "")
+    if not api_key or not waba_id:
+        raise HTTPException(422, detail="account is missing api_key/waba_id")
+    language = tpl.language or "en"
+    try:
+        components = ycloud_templates.body_to_components(tpl.body or {})
+        remote = await ycloud_templates.submit_template(
+            None,
+            api_key=api_key,
+            waba_id=waba_id,
+            name=tpl.name,
+            language=language,
+            category=(tpl.category or "marketing"),
+            components=components,
+        )
+    except ycloud_templates.TemplateError as e:
+        raise HTTPException(422, detail={"code": "invalid_template", "error": str(e)}) from e
+    except ycloud_templates.TemplateSubmitConflict:
+        remote = await ycloud_templates.find_template(
+            None, api_key=api_key, waba_id=waba_id, name=tpl.name, language=language
+        )
+        if remote is None:
+            raise HTTPException(
+                409, detail="template name+language already exists on this WABA"
+            ) from None
+    except ycloud_templates.TemplateSubmitError as e:
+        raise HTTPException(502, detail=f"ycloud: {e}") from e
+    tpl.approval_status = wa_template_sync.map_meta_status(remote.get("status"))
+    if remote.get("officialTemplateId"):
+        tpl.meta_template_id = str(remote["officialTemplateId"])
+    tpl.rejected_reason = (
+        str(remote.get("reason"))
+        if tpl.approval_status == "rejected" and remote.get("reason") not in (None, "NONE")
+        else None
+    )
+    tpl.waba_account_id = str(acct.id)
+    await session.commit()
+    return _out(tpl)
 
 
 # ==========================================================================

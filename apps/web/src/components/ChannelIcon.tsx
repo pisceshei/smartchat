@@ -15,7 +15,7 @@ import {
 } from "@ant-design/icons";
 import type { ReactNode } from "react";
 import type { ChannelType } from "@/api/types";
-import { CHANNEL_CATALOG } from "@/constants/channels";
+import { CHANNEL_CATALOG, galleryType } from "@/constants/channels";
 import { channelColors } from "@/theme/tokens";
 
 const ICONS: Partial<Record<ChannelType, ReactNode>> = {
@@ -40,9 +40,12 @@ export function ChannelIcon({
   type: ChannelType | string;
   size?: number;
 }) {
-  const color = channelColors[type] ?? "#64748B";
-  const meta = CHANNEL_CATALOG.find((c) => c.type === type);
-  const icon = ICONS[type as ChannelType];
+  // backend stores canonical types (whatsapp_cloud/whatsapp_bsp); map to the
+  // gallery family so those render the WhatsApp icon, not a generic grey chip
+  const g = galleryType(String(type));
+  const color = channelColors[g] ?? channelColors[type] ?? "#64748B";
+  const meta = CHANNEL_CATALOG.find((c) => c.type === g);
+  const icon = ICONS[g as ChannelType];
   return (
     <span
       className="sc-channel-chip"

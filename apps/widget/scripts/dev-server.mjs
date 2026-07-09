@@ -133,9 +133,11 @@ createServer(async (req, res) => {
     return res.end(loader.replace("__WIDGET_KEY__", KEY));
   }
 
-  if (p.startsWith("/chat/")) {
+  // chat app: canonical /widget-app/ (mirrors the api mount) + legacy /chat/
+  if (p.startsWith("/chat/") || p.startsWith("/widget-app/")) {
     try {
-      const file = p === "/chat/" ? "/chat/index.html" : p;
+      const rel = p.replace(/^\/widget-app/, "/chat");
+      const file = rel === "/chat/" ? "/chat/index.html" : rel;
       const buf = readFileSync(join(DIST, file));
       res.writeHead(200, { "Content-Type": MIME[extname(file)] || "application/octet-stream" });
       return res.end(buf);

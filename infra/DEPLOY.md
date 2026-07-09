@@ -91,8 +91,10 @@ dc ps               # 確認全 Up；postgres+bridge-wa healthy
 ③ 若 postgres/minio 曾用預設密碼建過，`dc down -v` 清卷後帶 `--env-file` 重建。
 
 ## 5. Nginx 反代（寶塔站點 chat.chilling.com.hk.conf；參考 infra/nginx/site-chat.conf）
-容器皆綁 127.0.0.1：`/`→web:8080、`/api/`+`/hooks/`+`/js/`+`/widget-app`→api:8000、
+容器皆綁 127.0.0.1：`/`→web:8080、`/api/`+`/hooks/`+`/js/`+`/widget-app`+`/chat/`（舊 loader 別名）→api:8000、
 `/ws/`（WS upgrade，含 `$connection_upgrade`）+`/widget/`（long-poll 30s）→ws-gateway:8001、`/s/`→edge:8002。
+另有三個 Chatwoot 殘留中和塊（`= /widget` 空白頁、`^~ /packs/` 204、`= /cable` 204）——
+商戶站上沒刪乾淨的舊 Chatwoot 腳本不再把管理後台登入頁渲染進聊天氣泡。
 複用現有 CF Origin 泛域證書；`nginx -t && nginx -s reload`。origin 直測：`curl -sk --resolve chat.chilling.com.hk:443:127.0.0.1 https://chat.chilling.com.hk/`。
 
 ## 6. 自用帳號設 Max（帳號註冊由用戶自行完成，其餘我方 provisioning）
@@ -107,7 +109,10 @@ dc run --rm -v /root/smartchat/apps/api/app/set_plan.py:/srv/smartchat/apps/api/
 ## 7. 切換 + 下線舊系統（已完成）
 - Nginx 站點指向新系統 → reload ✓
 - 停舊：`cd /root/chilling-chat/chatwoot && docker compose -f docker-compose.yaml -f docker-compose.override.yaml down`；`cd ../connector && docker compose down`（保留數據卷 30 天）✓
-- fecify 店鋪模板中的舊 widget 腳本換成新 embed `/js/project_{key}.js`（待辦）
+- fecify 店鋪換新 widget 腳本（用戶操作）：Fecify 後台 → 自定義代碼區，**刪除**內容含
+  `chatwoot`、`website_token` 或 `packs/js/sdk.js` 的舊嵌入段，只保留 SmartChat 段
+  （SmartChat 後台 → 整合 → 聊天外掛 → 安裝 複製；當前 key `cb7a196a5d9306f5`）。
+  邊緣已加中和塊（§5），沒刪乾淨也不會再顯示登入頁，但仍應刪掉避免雙氣泡/無效請求。
 
 ## 8. 回滾（72h 內）
 - 還原 nginx 設定：`cp /root/_backup_chatwoot_*/chat.nginx.conf.bak <conf> && nginx -s reload`

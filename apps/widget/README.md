@@ -43,7 +43,10 @@ serving the file unmodified under the conventional path works too.
 The loader renders a launcher bubble (Shadow DOM, `z-index` 2147483000,
 position/color/offsets from the bootstrap config) with an unread badge, plus
 a panel hosting the chat iframe at
-`{assetBase}/chat/index.html?k={key}&po={parentOrigin}&lang={lang}`.
+`{assetBase}/widget-app/index.html?k={key}&po={parentOrigin}&lang={lang}`
+(see `src/loader/chatUrl.ts`; the api also serves `/chat/…` as a legacy alias
+for loaders cached before this path existed — never emit `/chat/` for new
+builds).
 Desktop: 384×640 rounded panel. Mobile (≤ 640px): full-screen sheet.
 
 ## JS SDK surface

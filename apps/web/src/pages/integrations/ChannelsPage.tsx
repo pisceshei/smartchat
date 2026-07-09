@@ -8,7 +8,7 @@ import { channelsApi } from "@/api/endpoints";
 import type { ChannelAccount, ChannelAccountStatus, ChannelType } from "@/api/types";
 import { ChannelIcon } from "@/components/ChannelIcon";
 import { EmptyState } from "@/components/EmptyState";
-import { CHANNEL_CATALOG, type ChannelMeta } from "@/constants/channels";
+import { CHANNEL_CATALOG, galleryType, type ChannelMeta } from "@/constants/channels";
 import { t } from "@/i18n";
 import { fullTime } from "@/utils/time";
 import {
@@ -60,9 +60,12 @@ export function ChannelsPage() {
   const byType = useMemo(() => {
     const map = new Map<string, ChannelAccount[]>();
     for (const acc of accounts.data ?? []) {
-      const arr = map.get(acc.channel_type) ?? [];
+      // group by gallery family: whatsapp_cloud/whatsapp_bsp accounts belong
+      // on the WhatsApp API card (the stored type is backend-canonical)
+      const key = galleryType(acc.channel_type);
+      const arr = map.get(key) ?? [];
       arr.push(acc);
-      map.set(acc.channel_type, arr);
+      map.set(key, arr);
     }
     return map;
   }, [accounts.data]);

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger("smartchat")
 
@@ -32,6 +34,7 @@ MODULE_ROUTERS = [
     "apps.api.app.modules.hooks.wechat",
     "apps.api.app.modules.hooks.zalo",
     "apps.api.app.modules.hooks.tiktok",
+    "apps.api.app.modules.hooks.ycloud",
     "apps.api.app.modules.settings_mod.router",
     "apps.api.app.modules.openapi_public.router",
     "apps.api.app.modules.ai.router",
@@ -72,25 +75,38 @@ def create_app() -> FastAPI:
     return app
 
 
-def _mount_widget_assets(app: FastAPI) -> None:
+def _mount_widget_assets(app: FastAPI, dist_dir: Path | None = None) -> None:
     """Serve the embeddable loader at /js/project_{key}.js and the iframe chat
-    app under /widget-app/. The loader parses its widget key from its own URL,
-    so one static artifact serves every widget (Cloudflare-cacheable). In
-    production nginx can shadow these paths; this keeps a single-container
-    deployment fully functional."""
-    from pathlib import Path
-
-    from fastapi import HTTPException
+    app under /widget-app/ (plus a legacy /chat alias — loaders cached before
+    the /widget-app path fix keep requesting /chat/index.html for up to a day).
+    The loader parses its widget key from its own URL, so one static artifact
+    serves every widget (Cloudflare-cacheable). In production nginx can shadow
+    these paths; this keeps a single-container deployment fully functional."""
+    from fastapi import Depends, HTTPException
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
-    dist = Path(__file__).resolve().parents[2] / "widget" / "dist"
+    from .db import get_session
+    from .modules.widget import service as widget_service
+
+    dist = dist_dir or Path(__file__).resolve().parents[2] / "widget" / "dist"
 
     @app.get("/js/project_{widget_key}.js", include_in_schema=False)
-    async def widget_loader(widget_key: str):  # noqa: ANN202
+    async def widget_loader(
+        widget_key: str,
+        session: AsyncSession = Depends(get_session),
+    ):  # noqa: ANN202
         loader = dist / "loader.js"
         if not loader.is_file() or not widget_key.isalnum():
-            raise HTTPException(404)
+            raise HTTPException(404, headers={"Cache-Control": "no-store"})
+        known = True
+        try:
+            known = (await widget_service.get_widget_by_key(session, widget_key)) is not None
+        except Exception:  # noqa: BLE001 — DB hiccup: fail open, never kill live widgets
+            log.warning("widget_loader: enabled-check skipped", exc_info=True)
+        if not known:
+            # unknown/disabled key — 404 uncached so re-enabling works instantly
+            raise HTTPException(404, headers={"Cache-Control": "no-store"})
         return FileResponse(
             loader,
             media_type="application/javascript",
@@ -99,7 +115,10 @@ def _mount_widget_assets(app: FastAPI) -> None:
 
     chat_dir = dist / "chat"
     if chat_dir.is_dir():
-        app.mount("/widget-app", StaticFiles(directory=str(chat_dir), html=True), name="widget-app")
+        chat_static = StaticFiles(directory=str(chat_dir), html=True)
+        app.mount("/widget-app", chat_static, name="widget-app")
+        # Legacy alias: old cached loaders still request /chat/index.html.
+        app.mount("/chat", chat_static, name="widget-app-legacy")
 
 
 app = create_app()
