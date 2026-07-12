@@ -1,4 +1,5 @@
 /** zh-Hant + zh-CN + en UI strings, auto-selected from navigator.language. */
+import { mapLangTag } from "../shared/config";
 
 export type Lang = "en" | "zh-Hant" | "zh-CN";
 
@@ -138,9 +139,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
 };
 
 export function detectLang(preferred?: string | null): Lang {
-  const l = (preferred || navigator.language || "en").toLowerCase();
-  if (l.indexOf("zh") !== 0) return "en";
-  return /^zh[-_]?(cn|sg|hans)/.test(l) ? "zh-CN" : "zh-Hant";
+  return mapLangTag(preferred || navigator.language || "en");
 }
 
 let current: Lang = "en";

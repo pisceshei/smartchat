@@ -82,6 +82,19 @@ export interface WidgetBootstrap {
 
 export const DEFAULT_PRIMARY = "#4F46E5";
 
+/** Map a BCP47 tag OR a bare CMS locale code to a widget UI language.
+ * Fecify stores set `<html lang="tw">` / `"cn"` / `"hk"` (not zh-*), which a
+ * plain `zh` prefix check misreads as English — the widget then speaks English
+ * on a Traditional-Chinese shop. */
+export function mapLangTag(tag: string | null | undefined): "en" | "zh-CN" | "zh-Hant" {
+  const l = (tag || "").toLowerCase().trim();
+  if (!l) return "en";
+  if (/^(cn|sg|chs|hans)([-_]|$)/.test(l)) return "zh-CN";
+  if (/^(tw|hk|mo|cht|hant)([-_]|$)/.test(l)) return "zh-Hant";
+  if (l.indexOf("zh") !== 0) return "en";
+  return /^zh[-_]?(cn|sg|hans)/.test(l) ? "zh-CN" : "zh-Hant";
+}
+
 export function localized(t: LocalizedText, lang: string): string {
   if (!t) return "";
   if (typeof t === "string") return t;

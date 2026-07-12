@@ -13,9 +13,13 @@ import { WidgetCreateModal } from "./ConnectModals";
 
 export function widgetEmbedSnippet(widgetKey: string): string {
   const host = location.origin;
+  // SMARTCHAT_SETTINGS.key is what the loader actually reads (the old
+  // `SmartChatKey` global was dead); the ssq pre-seed lets merchants call
+  // `ssq.push([...])` before the loader arrives, per the JSSDK docs.
   return `<script>
   (function (w, d) {
-    w.SmartChatKey = "${widgetKey}";
+    w.SMARTCHAT_SETTINGS = w.SMARTCHAT_SETTINGS || { key: "${widgetKey}" };
+    w.ssq = w.ssq || [];
     var s = d.createElement("script");
     s.src = "${host}/js/project_${widgetKey}.js";
     s.async = true;

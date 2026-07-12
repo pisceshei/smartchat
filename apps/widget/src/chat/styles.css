@@ -158,6 +158,9 @@ body {
   overflow-x: hidden;
   padding: 16px 14px 10px;
   scroll-behavior: smooth;
+  /* Don't chain-scroll into the HOST page at the list boundary (mobile
+     full-screen panel: rubber-banding scrolled the shop page underneath). */
+  overscroll-behavior: contain;
 }
 
 .sc-row {
@@ -458,7 +461,9 @@ body {
   outline: none;
   resize: none;
   font-family: var(--sc-font);
-  font-size: 14px;
+  /* ≥16px: below that, focusing an input inside the iframe makes iOS Safari
+     zoom the HOST page (and the zoom doesn't reliably restore on close). */
+  font-size: 16px;
   line-height: 1.4;
   max-height: 120px;
   padding: 8px 6px;
@@ -537,6 +542,7 @@ body {
 .sc-prechat {
   flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 18px 16px;
   display: flex;
   align-items: flex-start;
@@ -582,7 +588,7 @@ body {
   border: 1px solid var(--sc-border);
   border-radius: 10px;
   padding: 9px 11px;
-  font-size: 14px;
+  font-size: 16px; /* ≥16px: prevent iOS host-page focus zoom (see .sc-input) */
   font-family: var(--sc-font);
   color: var(--sc-text);
   background: var(--sc-surface);
@@ -683,6 +689,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sc-home-hero {
