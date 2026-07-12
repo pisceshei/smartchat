@@ -81,6 +81,44 @@ Chatwoot deployment, on the SAME domain `chat.chilling.com.hk`.
   tab (`InboxPage` defaults to `"ai"`).
 
 ## 5. Open items / known bugs (pick these up)
+- **Round 12 (2026-07-09, commit `09c0095`): widget must never conflict with the host page.**
+  User embedded the widget on www.chill.love and Fecify 裝修 carousels stopped
+  being swipeable, worst on mobile. Root cause: on ≤640px the CLOSED panel was a
+  full-viewport cross-origin iframe hidden only by `opacity:0;pointer-events:none`
+  — several mobile engines still hit-test such an iframe, so the invisible frame
+  swallowed every touchstart on the page. Fixed: closed panel is now
+  `visibility:hidden` (out of hit-testing in every engine, iframe stays loaded)
+  and the mobile full-screen geometry applies only while `.open`. Plus the full
+  hardening set from a 13-vector adversarial audit: host div fixed+zero-size+
+  `all:initial` (immune to `div:empty`/transform theme rules); bail when Shadow
+  DOM is unavailable (the `*` reset would go page-global); adoptedStyleSheets
+  first (CSP style-src safe); mount errors contained (retry path can't mount a
+  second widget); history patch try/caught + 500ms debounce + gated by
+  `SMARTCHAT_SETTINGS.trackPageViews`; `ssq` claimed only when absent/pre-seed
+  array (live foreign SaleSmartly left alone); outbox capped; message handler
+  requires `ev.source === our iframe`; `SmartChat.hide()/show()/destroy()`;
+  iframe sandbox + mic allow dropped; `@media print` hide; 100dvh; **lang fix**:
+  Fecify sets `<html lang="tw">` which the zh-prefix check misread as English —
+  shared `mapLangTag()` (config.ts) now maps bare CMS codes (tw/hk/mo/cht→
+  zh-Hant, cn/sg/chs→zh-CN), token-anchored (twi/cnr stay en); iOS 16px inputs
+  (host-page focus zoom) + `overscroll-behavior:contain` (no rubber-band scroll
+  into the shop); install snippet writes `SMARTCHAT_SETTINGS={key}` + ssq
+  pre-seed (old `SmartChatKey` global was dead). Widget 26 tests, web 19,
+  loader 9.4KB/25KB budget.
+  **Deployed + verified live on www.chill.love** (real embed): host div fixed
+  0×0, closed panel `visibility:hidden`, 4-point `elementFromPoint` sweep all
+  hit shop elements, sandbox + adoptedStyleSheets active. Final swipe check on
+  the user's phone pending.
+  **EDGE-CACHE GOTCHA discovered during verification**: BaoTa's GLOBAL
+  `/www/server/nginx/conf/proxy.conf` enables a disk proxy cache
+  (`proxy_cache cache_one`, keyed by URL, inactive=1d) for EVERY proxied
+  vhost — the origin itself kept serving the OLD loader for the bare
+  `/js/project_*.js` URL (fresh for `?v=r12`) after the deploy; Cloudflare
+  showed DYNAMIC (innocent). This has been silently delaying every frontend
+  deploy by up to 1h (max-age). Fix = `proxy_cache off;` in the chat vhost
+  server{} block (see infra/nginx/site-chat.conf); the auto-mode classifier
+  blocks Claude editing the live vhost, so the USER must paste the one-liner
+  (documented in the session log) into the BaoTa terminal.
 - **Round 11 (2026-07-09): widget auto social-entry + official-API channels to production grade**
   - *widget 自動社媒入口*: connect a channel → the visitor widget's Home tab
     automatically gains a "透過以下方式聯絡我們" entry that deep-links to it.
